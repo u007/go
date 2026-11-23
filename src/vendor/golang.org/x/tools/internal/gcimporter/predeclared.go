@@ -72,8 +72,10 @@ func predeclared() []types.Type {
 		// invalid type
 		types.Typ[types.Invalid], // only appears in packages with errors
 
-		// used internally by gc; never used by this package or in .a files
-		anyType{},
+		// Option[T], the predeclared generic enum; instances refer to it.
+		// It takes the slot of gc's internal any type, which no export data
+		// uses: the table is full (predeclReserved).
+		types.Universe.Lookup("Option").Type(),
 
 		// comparable
 		types.Universe.Lookup("comparable").Type(),
@@ -85,8 +87,3 @@ func predeclared() []types.Type {
 	predecl[anyt] = decls
 	return decls
 }
-
-type anyType struct{}
-
-func (t anyType) Underlying() types.Type { return t }
-func (t anyType) String() string         { return "any" }

@@ -258,7 +258,15 @@ func (check *Checker) collectObjects() {
 		// we get "." as the directory which is what we would want.
 		fileDir := dir(check.fset.Position(file.Name.Pos()).Filename)
 
-		check.walkDecls(file.Decls, func(d decl) {
+		// Enum constructors and tags synthesized for this file (see
+		// enumConstructorDecls) are declared with the file's own declarations, in
+		// its file scope and version. The concatenation is a new slice, so the
+		// caller's file.Decls is not modified.
+		decls := file.Decls
+		if extra := check.enumDecls[file]; extra != nil {
+			decls = slices.Concat(decls, extra)
+		}
+		check.walkDecls(decls, func(d decl) {
 			switch d := d.(type) {
 			case importDecl:
 				// import package

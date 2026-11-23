@@ -16,6 +16,9 @@ import (
 // The result is in x.
 func (check *Checker) conversion(x *operand, T Type) {
 	constArg := x.mode() == constant_
+	// The mode and type of x change below, but the strict check needs the
+	// argument as it was.
+	arg := *x
 
 	var ok bool
 	var cause string
@@ -62,6 +65,11 @@ func (check *Checker) conversion(x *operand, T Type) {
 		} else {
 			check.errorf(x, InvalidConversion, "cannot convert %s to type %s", x, T)
 		}
+		x.invalidate()
+		return
+	}
+
+	if check.checkStrictTarget(&arg, T, InvalidConversion, "conversion") {
 		x.invalidate()
 		return
 	}

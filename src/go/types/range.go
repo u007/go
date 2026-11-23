@@ -86,6 +86,7 @@ func (check *Checker) rangeStmt(inner stmtContext, rangeStmt *ast.RangeStmt, noN
 		case sExtra != nil:
 			check.softErrorf(sExtra, InvalidIterVar, "range clause permits at most two iteration variables")
 		}
+		check.strictRangeChan(rangeVar, x.typ())
 		key, val = k, v
 	}
 
@@ -199,6 +200,9 @@ func (check *Checker) rangeStmt(inner stmtContext, rangeStmt *ast.RangeStmt, noN
 		check.assignment(&x, nil, "range clause")
 	}
 
+	if !isDef {
+		check.flowAssign(sKey, sValue) // each iteration assigns them before the body runs
+	}
 	check.stmt(inner, rangeStmt.Body)
 }
 

@@ -50,6 +50,8 @@ type parser struct {
 	lineComment *ast.CommentGroup // last line comment
 	top         bool              // in top of file (before package clause)
 	goVersion   string            // minimum Go version found in //go:build comment
+	strict      bool              // saw //go:strict directive
+	nostrict    bool              // saw //go:nostrict directive
 
 	// Next token
 	pos token.Pos   // token position
@@ -163,6 +165,9 @@ func (p *parser) next0() {
 				if x, err := constraint.Parse(p.lit); err == nil {
 					p.goVersion = constraint.GoVersion(x)
 				}
+			}
+			if msg, ok := p.strictDirective(p.lit); ok && msg != "" {
+				p.error(p.pos, msg)
 			}
 			if p.mode&ParseComments == 0 {
 				continue
@@ -759,6 +764,52 @@ func (p *parser) parseStructType() *ast.StructType {
 			Closing: rbrace,
 		},
 	}
+}
+
+// EnumType = "enum" "{" { EnumVariant ";" } "}" .
+// The "enum" identifier has already been consumed; pos is its position.
+func (p *parser) parseEnumType(pos token.Pos) *ast.EnumType {
+	if p.trace {
+		defer un(trace(p, "EnumType"))
+	}
+
+	p.expect(token.LBRACE)
+	var list []*ast.EnumVariant
+	for p.tok == token.IDENT {
+		list = append(list, p.parseEnumVariant())
+		if p.tok == token.RBRACE {
+			break
+		}
+		p.expectSemi()
+	}
+	p.expect(token.RBRACE)
+
+	return &ast.EnumType{
+		Enum:     pos,
+		Variants: list,
+	}
+}
+
+// EnumVariant = identifier [ "(" [ Type { "," Type } ] ")" ] .
+func (p *parser) parseEnumVariant() *ast.EnumVariant {
+	if p.trace {
+		defer un(trace(p, "EnumVariant"))
+	}
+
+	v := &ast.EnumVariant{Name: p.parseIdent()}
+	if p.tok == token.LPAREN {
+		v.Lparen = p.pos
+		p.next()
+		for p.tok != token.RPAREN && p.tok != token.EOF {
+			v.Payload = append(v.Payload, p.parseType())
+			if p.tok != token.COMMA {
+				break
+			}
+			p.next()
+		}
+		v.Rparen = p.expect(token.RPAREN)
+	}
+	return v
 }
 
 func (p *parser) parsePointerType() *ast.StarExpr {
@@ -2585,7 +2636,30 @@ func (p *parser) parseGenericType(spec *ast.TypeSpec, openPos token.Pos, name0 *
 		spec.Assign = p.pos
 		p.next()
 	}
-	spec.Type = p.parseType()
+	spec.Type = p.parseTypeSpecType()
+}
+
+// parseTypeSpecType parses the type in a type declaration. "enum" is
+// recognized as a soft keyword only here: within a type declaration, "enum"
+// immediately followed by "{" unambiguously introduces an enum type. In every
+// other type position (function results, parameters, composite elements, ...)
+// "enum" is an ordinary identifier, preserving Go 1 compatibility.
+func (p *parser) parseTypeSpecType() ast.Expr {
+	if p.tok == token.IDENT && p.lit == "enum" {
+		pos := p.pos
+		p.next()
+		if p.tok == token.LBRACE {
+			return p.parseEnumType(pos)
+		}
+		// Not an enum type: "enum" is a regular (possibly qualified or
+		// instantiated) type name.
+		typ := p.parseTypeName(&ast.Ident{NamePos: pos, Name: "enum"})
+		if p.tok == token.LBRACK {
+			typ = p.parseTypeInstance(typ)
+		}
+		return typ
+	}
+	return p.parseType()
 }
 
 func (p *parser) parseTypeSpec(doc *ast.CommentGroup, _ token.Token, _ int) ast.Spec {
@@ -2655,7 +2729,7 @@ func (p *parser) parseTypeSpec(doc *ast.CommentGroup, _ token.Token, _ int) ast.
 			spec.Assign = p.pos
 			p.next()
 		}
-		spec.Type = p.parseType()
+		spec.Type = p.parseTypeSpecType()
 	}
 
 	spec.Comment = p.expectSemi()
@@ -2909,6 +2983,8 @@ func (p *parser) parseFile() *ast.File {
 		Imports:   p.imports,
 		Comments:  p.comments,
 		GoVersion: p.goVersion,
+		Strict:    p.strict,
+		NoStrict:  p.nostrict,
 	}
 	var declErr func(token.Pos, string)
 	if p.mode&DeclarationErrors != 0 {
@@ -2941,4 +3017,38 @@ func packIndexExpr(x ast.Expr, lbrack token.Pos, exprs []ast.Expr, rbrack token.
 			Rbrack:  rbrack,
 		}
 	}
+}
+
+// strictDirective handles the comment text if it is a //go:strict or
+// //go:nostrict directive. It reports whether text is one, and the error
+// message for a misuse, if any. //go:strict makes the file strict;
+// //go:nostrict exempts it where files are strict by default.
+func (p *parser) strictDirective(text string) (msg string, ok bool) {
+	for _, d := range [...]struct {
+		name string
+		seen *bool
+	}{{"go:strict", &p.strict}, {"go:nostrict", &p.nostrict}} {
+		rest, found := strings.CutPrefix(text, "//"+d.name)
+		if !found || rest != "" && rest[0] != ' ' && rest[0] != '\t' {
+			continue
+		}
+		switch {
+		case !p.top:
+			// After the package clause, trailing text makes it an ordinary comment.
+			if strings.TrimSpace(rest) == "" {
+				msg = d.name + " must appear before package clause"
+			}
+		case strings.TrimSpace(rest) != "":
+			msg = d.name + " takes no arguments"
+		case *d.seen:
+			msg = "duplicate " + d.name + " directive"
+		default:
+			*d.seen = true
+			if p.strict && p.nostrict {
+				msg = "go:strict and go:nostrict cannot both appear"
+			}
+		}
+		return msg, true
+	}
+	return "", false
 }

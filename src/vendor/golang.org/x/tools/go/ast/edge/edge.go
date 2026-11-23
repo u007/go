@@ -166,6 +166,11 @@ const (
 	ValueSpec_Type
 	ValueSpec_Values
 
+	// Enum support (Go 1.28 tagged enums).
+	EnumType_Variants
+	EnumVariant_Name
+	EnumVariant_Payload
+
 	maxKind
 )
 
@@ -215,6 +220,9 @@ var fieldInfos = [...]fieldInfo{
 	Ellipsis_Elt:          info[*ast.Ellipsis]("Elt"),
 	ExprStmt_X:            info[*ast.ExprStmt]("X"),
 	FieldList_List:        info[*ast.FieldList]("List"),
+	EnumType_Variants:     info[*ast.EnumType]("Variants"),
+	EnumVariant_Name:      info[*ast.EnumVariant]("Name"),
+	EnumVariant_Payload:   info[*ast.EnumVariant]("Payload"),
 	Field_Comment:         info[*ast.Field]("Comment"),
 	Field_Doc:             info[*ast.Field]("Doc"),
 	Field_Names:           info[*ast.Field]("Names"),

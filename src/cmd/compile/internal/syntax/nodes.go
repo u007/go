@@ -43,6 +43,8 @@ type File struct {
 	DeclList  []Decl
 	EOF       Pos
 	GoVersion string
+	Strict    bool // true if the file carries a //go:strict directive
+	NoStrict  bool // true if the file carries a //go:nostrict directive
 	node
 }
 
@@ -292,6 +294,20 @@ type (
 		FieldList []*Field
 		TagList   []*BasicLit // i >= len(TagList) || TagList[i] == nil means no tag for field i
 		expr
+	}
+
+	// enum { Variants[0]; Variants[1]; ... }
+	EnumType struct {
+		Variants []*EnumVariant
+		expr
+	}
+
+	// Name
+	// Name(Type0, Type1, ...)
+	EnumVariant struct {
+		Name         *Name
+		PayloadTypes []Expr // nil or empty means unit variant (no payload)
+		node
 	}
 
 	// Name Type

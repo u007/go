@@ -317,3 +317,22 @@ func println(args ...Type)
 type error interface {
 	Error() string
 }
+
+// Option is a predeclared enum type for a value of type T that may be absent.
+// Its zero value is None. Read the value with an enum switch:
+//
+//	switch o {
+//	case Some(v):
+//	case None:
+//	}
+type Option[T any] enum {
+	None
+	Some(T)
+}
+
+// The Some built-in function returns an Option that holds x.
+func Some[T any](x T) Option[T]
+
+// None is a predeclared identifier representing the Option value that holds
+// nothing. It is the zero value of every Option type.
+var None Option[Type]

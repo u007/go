@@ -600,6 +600,10 @@ type SliceExpr struct {
 	Low  Node
 	High Node
 	Max  Node
+
+	// LenBound reports that High must not exceed len(X), rather than cap(X).
+	// It is set for slices of zero-unsafe element type in //go:strict files.
+	LenBound bool
 }
 
 func NewSliceExpr(pos src.XPos, op Op, x, low, high, max Node) *SliceExpr {

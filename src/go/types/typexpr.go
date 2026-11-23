@@ -34,6 +34,10 @@ func (check *Checker) ident(x *operand, e *ast.Ident, wantType bool) {
 		if !check.verifyVersionf(e, go1_18, "predeclared %s", e.Name) {
 			return // avoid follow-on errors
 		}
+	case universeOption, universeNone, universeSome:
+		if !check.verifyVersionf(e, go1_28, "predeclared %s", e.Name) {
+			return // avoid follow-on errors
+		}
 	}
 	check.recordUse(e, obj)
 
@@ -110,6 +114,8 @@ func (check *Checker) ident(x *operand, e *ast.Ident, wantType bool) {
 		if obj.pkg == check.pkg {
 			check.usedVars[obj] = true
 		}
+		check.flowRef(e, obj)
+		x.nonNull = check.flowNonNil(obj)
 		check.addDeclDep(obj)
 		if !isValid(typ) {
 			return
@@ -119,6 +125,7 @@ func (check *Checker) ident(x *operand, e *ast.Ident, wantType bool) {
 	case *Func:
 		check.addDeclDep(obj)
 		x.mode_ = value
+		typ = check.strictFuncValue(e.Pos(), typ)
 
 	case *Builtin:
 		x.id = obj.id
@@ -313,8 +320,13 @@ func (check *Checker) typInternal(e0 ast.Expr, def *TypeName) (T Type) {
 		check.structType(typ, e)
 		return typ
 
+	case *ast.EnumType:
+		typ := new(Struct)
+		check.enumType(typ, e)
+		return typ
+
 	case *ast.StarExpr:
-		typ := new(Pointer)
+		typ := &Pointer{strict: check.inStrictFile(e.Pos())}
 		typ.base = Typ[Invalid] // avoid nil base in invalid recursive type declaration
 		typ.base = check.varType(e.X)
 		// If typ.base is invalid, it's unlikely that *base is particularly

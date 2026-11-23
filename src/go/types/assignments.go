@@ -114,6 +114,8 @@ func (check *Checker) assignment(x *operand, T Type, context string) {
 			check.errorf(x, code, "cannot use %s as %s value in %s", x, T, context)
 		}
 		x.invalidate()
+	} else if check.checkStrictTarget(x, T, IncompatibleAssign, context) {
+		x.invalidate()
 	}
 }
 
@@ -177,6 +179,7 @@ func (check *Checker) initVar(lhs *Var, x *operand, context string) {
 		lhs.typ = typ
 	}
 
+	check.flowProve(lhs, x)
 	check.assignment(x, lhs.typ, context)
 }
 
@@ -212,7 +215,10 @@ func (check *Checker) lhsVar(lhs ast.Expr) Type {
 	}
 
 	var x operand
+	prevLHS := check.strictLHS
+	check.strictLHS = ast.Unparen(lhs)
 	check.expr(nil, &x, lhs)
+	check.strictLHS = prevLHS
 
 	if v != nil {
 		check.usedVars[v] = v_used // restore v.used
@@ -276,6 +282,7 @@ func (check *Checker) assignVar(lhs, rhs ast.Expr, x *operand, context string) {
 	if T == nil && context == "assignment" {
 		context = "assignment to _ identifier"
 	}
+	check.flowProve(check.flowVar(lhs), x)
 	check.assignment(x, T, context)
 }
 

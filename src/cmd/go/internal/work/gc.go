@@ -91,6 +91,9 @@ func (gcToolchain) gc(b *Builder, a *Action, export string, importcfg, embedcfg 
 	if p.Standard {
 		defaultGcFlags = append(defaultGcFlags, "-std")
 	}
+	if p.Module != nil && p.Module.Strict {
+		defaultGcFlags = append(defaultGcFlags, "-strict")
+	}
 
 	// If we're giving the compiler the entire package (no C etc files), tell it that,
 	// so that it can give good error messages about forward declarations.

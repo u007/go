@@ -20,12 +20,16 @@ import (
 
 func TestBuildInfo(t *testing.T) {
         info, ok := debug.ReadBuildInfo()
-        if !ok {
+        if !ok || info == nil { // modules are strict: ok does not prove info non-nil
                 t.Fatal("no debug info")
+                return // t.Fatal does not return, but the checker cannot know it
         }
         t.Log(info.Main.Version)
 
         for _, d := range info.Deps {
+                if d == nil {
+                        continue
+                }
                 t.Log(d.Path, d.Version)
         }
 }

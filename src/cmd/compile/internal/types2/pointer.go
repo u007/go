@@ -6,10 +6,13 @@ package types2
 
 // A Pointer represents a pointer type.
 type Pointer struct {
-	base Type // element type
+	base   Type // element type
+	strict bool // written in a file with //go:strict; not part of identity
 }
 
 // NewPointer returns a new pointer type for the given element (base) type.
+// The result is never strict: NewPointer has no source position. Checker code
+// that creates a pointer from source uses newPointerAt instead.
 func NewPointer(elem Type) *Pointer { return &Pointer{base: elem} }
 
 // Elem returns the element type for the given pointer p.

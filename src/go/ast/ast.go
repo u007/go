@@ -457,6 +457,25 @@ type (
 		Incomplete bool       // true if (source) fields are missing in the Fields list
 	}
 
+	// An EnumType node represents an enum type.
+	EnumType struct {
+		Enum       token.Pos      // position of "enum" keyword
+		Variants   []*EnumVariant // list of variant declarations
+		Incomplete bool           // true if (source) variants are missing in the Variants list
+	}
+
+	// An EnumVariant node represents one variant of an enum type.
+	//
+	//	A unit variant has an empty Payload and an invalid Lparen.
+	//	A tuple variant has a valid Lparen, the '(' and ')' positions, and
+	//	the payload types between them.
+	EnumVariant struct {
+		Name    *Ident
+		Lparen  token.Pos // position of "(", if any
+		Payload []Expr    // payload types; nil for a unit variant
+		Rparen  token.Pos // position of ")", if any
+	}
+
 	// Pointer types are represented via StarExpr nodes.
 
 	// A FuncType node represents a function type.
@@ -516,6 +535,7 @@ func (x *BinaryExpr) Pos() token.Pos     { return x.X.Pos() }
 func (x *KeyValueExpr) Pos() token.Pos   { return x.Key.Pos() }
 func (x *ArrayType) Pos() token.Pos      { return x.Lbrack }
 func (x *StructType) Pos() token.Pos     { return x.Struct }
+func (x *EnumType) Pos() token.Pos       { return x.Enum }
 func (x *FuncType) Pos() token.Pos {
 	if x.Func.IsValid() || x.Params == nil { // see issue 3870
 		return x.Func
@@ -558,6 +578,19 @@ func (x *BinaryExpr) End() token.Pos     { return x.Y.End() }
 func (x *KeyValueExpr) End() token.Pos   { return x.Value.End() }
 func (x *ArrayType) End() token.Pos      { return x.Elt.End() }
 func (x *StructType) End() token.Pos     { return x.Fields.End() }
+func (x *EnumType) End() token.Pos {
+	if n := len(x.Variants); n > 0 {
+		return x.Variants[n-1].End()
+	}
+	return x.Enum + 4 // len("enum")
+}
+func (x *EnumVariant) Pos() token.Pos { return x.Name.Pos() }
+func (x *EnumVariant) End() token.Pos {
+	if x.Lparen.IsValid() {
+		return x.Rparen + 1
+	}
+	return x.Name.End()
+}
 func (x *FuncType) End() token.Pos {
 	if x.Results != nil {
 		return x.Results.End()
@@ -590,6 +623,7 @@ func (*KeyValueExpr) exprNode()   {}
 
 func (*ArrayType) exprNode()     {}
 func (*StructType) exprNode()    {}
+func (*EnumType) exprNode()      {}
 func (*FuncType) exprNode()      {}
 func (*InterfaceType) exprNode() {}
 func (*MapType) exprNode()       {}
@@ -1073,6 +1107,8 @@ type File struct {
 	Unresolved         []*Ident        // unresolved identifiers in this file. Deprecated: see Object
 	Comments           []*CommentGroup // comments in the file, in lexical order
 	GoVersion          string          // minimum Go version required by //go:build or // +build directives
+	Strict             bool            // true if the file carries a //go:strict directive
+	NoStrict           bool            // true if the file carries a //go:nostrict directive
 }
 
 // Pos returns the position of the package declaration.

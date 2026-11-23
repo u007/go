@@ -124,6 +124,7 @@ type CmdFlags struct {
 	Spectre            string       "help:\"enable spectre mitigations in `list` (all, index, ret)\""
 	Stats              bool         "help:\"print compiler statistics\""
 	Std                bool         "help:\"compiling standard library\""
+	Strict             bool         "help:\"check every file without a //go:nostrict directive as if it carried //go:strict\""
 	SymABIs            string       "help:\"read symbol ABIs from `file`\""
 	TraceProfile       string       "help:\"write an execution trace to `file`\""
 	TrimPath           string       "help:\"remove `prefix` from recorded source file paths\""

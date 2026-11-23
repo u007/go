@@ -424,6 +424,10 @@ func (check *Checker) _Copy(z *operand, call *ast.CallExpr) {
 			check.errorf(x, InvalidCopy, "invalid copy: arguments %s and %s have different element types %s and %s", x, y, dstE, srcE)
 			return
 		}
+		if check.inStrictFile(call.Pos()) && check.strictLost(srcE, dstE) {
+			check.errorf(y, InvalidCopy, "strict: cannot copy %s into %s: source elements of type %s are nullable", y, x, srcE)
+			return
+		}
 	}
 
 	z.mode_ = value
@@ -588,6 +592,7 @@ func (check *Checker) _Make(z *operand, call *ast.CallExpr) {
 		check.errorf(arg0, InvalidMake, invalidArg+"cannot make %s: %s", arg0, err.format(check))
 		return
 	}
+	check.strictMake(call, u)
 
 	var min int // minimum number of arguments
 	switch u.(type) {
@@ -726,6 +731,7 @@ func (check *Checker) _New(z *operand, call *ast.CallExpr) {
 	case typexpr:
 		// new(T)
 		check.validVarType(arg, x.typ())
+		check.strictNew(call, x.typ())
 	default:
 		// new(expr)
 		if x.isUntyped() {
@@ -742,7 +748,43 @@ func (check *Checker) _New(z *operand, call *ast.CallExpr) {
 
 	T := x.typ()
 	z.mode_ = value
-	z.typ_ = NewPointer(T)
+	z.typ_ = check.newPointerAt(call.Pos(), T)
+	if check.recordTypes() {
+		check.recordBuiltinType(call.Fun, makeSig(z.typ(), T))
+	}
+}
+
+// Some(x) Option[T], where T is the type of x. Some(nil) and Some(None) are
+// errors: they have no type.
+func (check *Checker) _Some(z *operand, call *ast.CallExpr) {
+	if !check.argCount(call, len(call.Args), 1, false) {
+		return
+	}
+
+	x := new(operand)
+	check.expr(nil, x, call.Args[0])
+	check.exclude(x, 1<<novalue|1<<builtin|1<<typexpr)
+	if !x.isValid() {
+		return
+	}
+	check.assignment(x, nil, "argument to Some")
+	if !x.isValid() {
+		return
+	}
+	if !isTyped(x.typ()) {
+		check.errorf(x, UntypedNilUse, "use of untyped nil in %s", "argument to Some")
+		return
+	}
+
+	T := x.typ()
+	if x.nonNull {
+		// A narrowed variable is proven non-nil, so the payload has the strict form.
+		if s := strictForm(T, true); s != nil {
+			T = s
+		}
+	}
+	z.mode_ = value
+	z.typ_ = check.instance(call.Pos(), universeOption.Type().(*Named), []Type{T}, nil, check.context())
 	if check.recordTypes() {
 		check.recordBuiltinType(call.Fun, makeSig(z.typ(), T))
 	}
@@ -824,6 +866,7 @@ func (check *Checker) _Real(z *operand, call *ast.CallExpr) {
 
 // recover() interface{}
 func (check *Checker) _Recover(z *operand, call *ast.CallExpr) {
+	check.strictRecover(call)
 	if _, _, ok := check.argn(call, 0); !ok {
 		return
 	}
@@ -934,7 +977,7 @@ func (check *Checker) _Offsetof(z *operand, call *ast.CallExpr) {
 		if x.mode() == variable || indirect {
 			mode = variable
 		}
-		check.record(&operand{mode, selx, obj.Type(), nil, 0})
+		check.record(&operand{mode, selx, obj.Type(), nil, 0, false})
 	}
 
 	// The field offset is considered a variable even if the field is declared before

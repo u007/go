@@ -505,6 +505,9 @@ func (r *reader) doTyp() *types.Type {
 	default:
 		panic(fmt.Sprintf("unexpected type: %v", tag))
 
+	case pkgbits.TypeStrict:
+		return r.doTyp() // strictness matters to the type checker only
+
 	case pkgbits.TypeBasic:
 		return *basics[r.Len()]
 
@@ -2276,7 +2279,8 @@ func (r *reader) expr() (res ir.Node) {
 	case exprZero:
 		pos := r.pos()
 		typ := r.typ()
-		return ir.NewZero(pos, typ)
+		// ir.NewZero returns an untyped composite literal for a struct type.
+		return typecheck.Expr(r.curfn, ir.NewZero(pos, typ))
 
 	case exprCompLit:
 		return r.compLit()
@@ -2417,7 +2421,9 @@ func (r *reader) expr() (res ir.Node) {
 		if index[2] != nil {
 			op = ir.OSLICE3
 		}
-		return typecheck.Expr(r.curfn, ir.NewSliceExpr(pos, op, x, index[0], index[1], index[2]))
+		n := ir.NewSliceExpr(pos, op, x, index[0], index[1], index[2])
+		n.LenBound = r.Bool()
+		return typecheck.Expr(r.curfn, n)
 
 	case exprAssert:
 		x := r.expr()

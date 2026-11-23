@@ -1173,9 +1173,10 @@ func writtenByWriteBasicTypes(typ *types.Type) bool {
 		typ = typ.Elem()
 	}
 
-	// Basic types.
+	// Basic types. Universe struct types (Option[T]) are not basic; they are
+	// emitted by each package that uses them.
 	sym := typ.Sym()
-	if sym != nil && (sym.Pkg == types.BuiltinPkg || sym.Pkg == types.UnsafePkg) {
+	if sym != nil && (sym.Pkg == types.BuiltinPkg && !typ.IsStruct() || sym.Pkg == types.UnsafePkg) {
 		return true
 	}
 	// any or error

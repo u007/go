@@ -524,7 +524,13 @@ func (t *Named) expandMethod(i int) *Func {
 
 	var rtyp Type
 	if orig.hasPtrRecv() {
-		rtyp = NewPointer(t)
+		// Keep the strictness of the receiver pointer declared on the origin method.
+		var strict bool
+		if oldSig.recv != nil {
+			p, _ := oldSig.recv.typ.(*Pointer)
+			strict = p != nil && p.strict
+		}
+		rtyp = &Pointer{base: t, strict: strict}
 	} else {
 		rtyp = t
 	}

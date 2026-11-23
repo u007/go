@@ -84,6 +84,15 @@ func newTypeHasher(buf *bytes.Buffer, ctxt *Context) *typeWriter {
 	return &typeWriter{buf, make(map[Type]bool), nil, ctxt, nil, false, false, false}
 }
 
+// strictMark writes the strict marker of a pointer, function, or interface type
+// when hashing. Strictness is not part of identity, but an instance must keep
+// the strictness of its own type arguments.
+func (w *typeWriter) strictMark(strict bool) {
+	if w.ctxt != nil && strict {
+		w.byte('!')
+	}
+}
+
 func (w *typeWriter) byte(b byte) {
 	if w.ctxt != nil {
 		if b == ' ' {
@@ -183,6 +192,7 @@ func (w *typeWriter) typ(typ Type) {
 
 	case *Pointer:
 		w.byte('*')
+		w.strictMark(t.strict)
 		w.typ(t.base)
 
 	case *Tuple:
@@ -190,6 +200,7 @@ func (w *typeWriter) typ(typ Type) {
 
 	case *Signature:
 		w.string("func")
+		w.strictMark(t.strict)
 		w.signature(t)
 
 	case *Union:
@@ -225,7 +236,9 @@ func (w *typeWriter) typ(typ Type) {
 			// Print it as such and continue.
 			w.string("/* implicit */ ")
 		}
-		w.string("interface{")
+		w.string("interface")
+		w.strictMark(t.strict)
+		w.string("{")
 		first := true
 		if w.ctxt != nil {
 			w.typeSet(t.typeSet())

@@ -56,6 +56,7 @@ const (
 	TypeInterface
 	TypeUnion
 	TypeTypeParam
+	TypeStrict // prefix: the pointer, function, or interface type that follows was written in a //go:strict file
 )
 
 // A CodeObj distinguishes among go/types.Object encodings.

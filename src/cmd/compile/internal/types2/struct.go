@@ -8,6 +8,7 @@ import (
 	"cmd/compile/internal/syntax"
 	. "internal/types/errors"
 	"strconv"
+	"strings"
 )
 
 // ----------------------------------------------------------------------------
@@ -15,8 +16,9 @@ import (
 
 // A Struct represents a struct type.
 type Struct struct {
-	fields []*Var   // fields != nil indicates the struct is set up (possibly with len(fields) == 0)
-	tags   []string // field tags; nil if there are no tags
+	fields   []*Var   // fields != nil indicates the struct is set up (possibly with len(fields) == 0)
+	tags     []string // field tags; nil if there are no tags
+	enumInfo *EnumInfo
 }
 
 // NewStruct returns a new struct with the given fields and corresponding field tags.
@@ -33,7 +35,7 @@ func NewStruct(fields []*Var, tags []string) *Struct {
 	if len(tags) > len(fields) {
 		panic("more tags than fields")
 	}
-	s := &Struct{fields: fields, tags: tags}
+	s := &Struct{fields: fields, tags: tags, enumInfo: enumInfoOfTag(fields, tags)}
 	s.markComplete()
 	return s
 }
@@ -51,6 +53,12 @@ func (s *Struct) Tag(i int) string {
 	}
 	return ""
 }
+
+// EnumInfo returns the enum variant metadata if this struct was lowered from an enum, or nil.
+func (s *Struct) EnumInfo() *EnumInfo { return s.enumInfo }
+
+// SetEnumInfo sets the enum variant metadata on this struct.
+func (s *Struct) SetEnumInfo(info *EnumInfo) { s.enumInfo = info }
 
 func (s *Struct) Underlying() Type { return s }
 func (s *Struct) String() string   { return TypeString(s, nil) }
@@ -119,6 +127,9 @@ func (check *Checker) structType(styp *Struct, e *syntax.StructType) {
 		tag = ""
 		if i < len(e.TagList) {
 			tag = check.tag(e.TagList[i])
+			if strings.HasPrefix(tag, "go:enum:") {
+				check.error(e.TagList[i], BadDecl, "struct tag key go:enum is reserved for enum types")
+			}
 		}
 		if f.Name != nil {
 			// named field

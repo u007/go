@@ -277,7 +277,7 @@ func (b *Builder) buildActionID(a *Action) cache.ActionID {
 	b.addPackageOrigin(h, p)
 
 	if p.Module != nil {
-		fmt.Fprintf(h, "go %s\n", p.Module.GoVersion)
+		fmt.Fprintf(h, "go %s strict %v\n", p.Module.GoVersion, p.Module.Strict)
 	}
 	fmt.Fprintf(h, "goos %s goarch %s\n", cfg.Goos, cfg.Goarch)
 	fmt.Fprintf(h, "import %q\n", p.ImportPath)
@@ -1554,6 +1554,7 @@ type vetConfig struct {
 	VetxOutput  string            // write vetx data to this output file
 	Stdout      string            // write stdout (JSON, unified diff) to this output file
 	GoVersion   string            // Go version for package
+	Strict      bool              // every file is checked as if it carried //go:strict
 	FixArchive  string            // write fixed files to this zip archive, if non-empty
 
 	SucceedOnTypecheckFailure bool // awful hack; see #18395 and below
@@ -1650,6 +1651,7 @@ func buildVetConfig(a *Action, srcfiles []string, vetDeps []*Action) {
 	if a.Package.Module != nil {
 		v = cmp.Or(a.Package.Module.GoVersion, gover.DefaultGoModVersion)
 		vcfg.Module = analysisModuleFromModulePublic(a.Package.Module)
+		vcfg.Strict = a.Package.Module.Strict
 	}
 	vcfg.GoVersion = "go" + v
 

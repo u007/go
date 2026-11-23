@@ -144,12 +144,18 @@ func (check *Checker) unary(x *operand, e *syntax.Operation) {
 			return
 		}
 		x.mode_ = value
-		x.typ_ = &Pointer{base: x.typ()}
+		x.typ_ = check.newPointerAt(e.Pos(), x.typ())
 		return
 
 	case syntax.Recv:
 		// We cannot receive a value with an incomplete type; make sure it's complete.
 		if elem := check.chanElem(x, x, true); elem != nil && check.isComplete(elem) {
+			// A receive from a closed channel yields the zero value of elem.
+			if check.inStrictFile(e.Pos()) && check.isZeroUnsafe(elem) {
+				check.errorf(e, InvalidReceive, "strict: cannot receive from %s: a closed channel yields the zero value of %s", x.expr, elem)
+				x.invalidate()
+				return
+			}
 			x.mode_ = commaok
 			x.typ_ = elem
 			check.hasCallOrRecv = true
@@ -393,7 +399,7 @@ func (check *Checker) updateExprType(x syntax.Expr, typ Type, final bool) {
 	// an expression is not representable in the new type (was go.dev/issue/82087).
 	if _, isParen := x.(*syntax.ParenExpr); !isParen && old.val != nil {
 		// If x is a constant, it must be representable as a value of typ.
-		c := operand{old.mode, x, old.typ, old.val, 0}
+		c := operand{old.mode, x, old.typ, old.val, 0, false}
 		check.convertUntyped(&c, typ)
 		if !c.isValid() {
 			return
@@ -434,6 +440,13 @@ func (check *Checker) implicitTypeAndValue(x *operand, target Type) (Type, const
 
 	if x.isNil() {
 		assert(x.isUntyped())
+		// None has the type of an Option target; nil is not an Option.
+		if isNone(x) != isOption(target) {
+			return nil, nil, InvalidUntypedConversion
+		}
+		if isNone(x) {
+			return target, nil, 0
+		}
 		if hasNil(target) {
 			if isTypes2 {
 				return target, nil, 0
@@ -1026,6 +1039,12 @@ func (check *Checker) rawExpr(T *target, x *operand, e syntax.Expr, allowGeneric
 
 	kind := check.exprInternal(T, x, e)
 
+	// nonNull is only set for an identifier (Rule 2). Any other expression
+	// yields a new value, so it must not carry a non-nil proof from its operands.
+	if _, ok := syntax.Unparen(e).(*syntax.Name); !ok {
+		x.nonNull = false
+	}
+
 	if !allowGeneric {
 		check.nonGeneric(T, x)
 	}
@@ -1072,6 +1091,8 @@ func (check *Checker) exprInternal(T *target, x *operand, e syntax.Expr) exprKin
 	// (was go.dev/issue/5770)
 	x.invalidate()
 	x.typ_ = Typ[Invalid]
+	// callers reuse operands, so a proof from an earlier expression must not leak
+	x.nonNull = false
 
 	switch e := e.(type) {
 	case nil:
@@ -1163,7 +1184,7 @@ func (check *Checker) exprInternal(T *target, x *operand, e syntax.Expr) exprKin
 		}
 		check.typeAssertion(e, x, T, false)
 		x.mode_ = commaok
-		x.typ_ = T
+		x.typ_ = check.strictAssertType(e.Type, T)
 
 	case *syntax.TypeSwitchGuard:
 		// x.(type) expressions are handled explicitly in type switches
@@ -1210,8 +1231,9 @@ func (check *Checker) exprInternal(T *target, x *operand, e syntax.Expr) exprKin
 					goto Error
 				case typexpr:
 					check.validVarType(e.X, x.typ())
-					x.typ_ = &Pointer{base: x.typ()}
+					x.typ_ = check.newPointerAt(e.Pos(), x.typ())
 				default:
+					check.strictUse(x)
 					var base Type
 					if !underIs(x.typ(), func(u Type) bool {
 						p, _ := u.(*Pointer)

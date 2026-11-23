@@ -485,6 +485,7 @@ var (
 	anyTypeName        = types2.Universe.Lookup("any").(*types2.TypeName)
 	comparableTypeName = types2.Universe.Lookup("comparable").(*types2.TypeName)
 	runeTypeName       = types2.Universe.Lookup("rune").(*types2.TypeName)
+	optionTypeName     = types2.Universe.Lookup("Option").(*types2.TypeName)
 )
 
 // typ writes a use of the given type into the bitstream.
@@ -534,6 +535,9 @@ func (pw *pkgWriter) typIdx(typ types2.Type, dict *writerDict) typeInfo {
 	w := pw.newWriter(pkgbits.SectionType, pkgbits.SyncTypeIdx)
 	w.dict = dict
 
+	if types2.IsStrict(typ) {
+		w.Code(pkgbits.TypeStrict) // only packages with strict types use this code
+	}
 	switch typ := typ.(type) {
 	default:
 		base.Fatalf("unexpected type: %v (%T)", typ, typ)
@@ -846,7 +850,7 @@ func (pw *pkgWriter) objIdx(obj types2.Object) index {
 // doObj writes the RelocObj definition for obj to w, and the
 // RelocObjExt definition to wext.
 func (w *writer) doObj(wext *writer, obj types2.Object) pkgbits.CodeObj {
-	if obj.Pkg() != w.p.curpkg {
+	if obj.Pkg() != w.p.curpkg && obj != optionTypeName {
 		return pkgbits.ObjStub
 	}
 
@@ -1231,12 +1235,14 @@ func (w *writer) funcExt(obj *types2.Func) {
 }
 
 func (w *writer) typeExt(obj *types2.TypeName) {
-	decl, ok := w.p.typDecls[obj]
-	assert(ok)
-
 	w.Sync(pkgbits.SyncTypeExt)
 
-	w.pragmaFlag(asPragmaFlag(decl.Pragma))
+	if decl, ok := w.p.typDecls[obj]; ok {
+		w.pragmaFlag(asPragmaFlag(decl.Pragma))
+	} else {
+		assert(obj == optionTypeName) // universe type: no declaration, no pragma
+		w.pragmaFlag(0)
+	}
 
 	// No LSym.SymIdx info yet.
 	w.Int64(-1)
@@ -2047,6 +2053,7 @@ func (w *writer) expr(expr syntax.Expr) {
 		for _, n := range &expr.Index {
 			w.optExpr(n)
 		}
+		w.Bool(w.p.info.LenBounded[expr])
 
 	case *syntax.AssertExpr:
 		iface := w.p.typeOf(expr.X)
@@ -2101,6 +2108,10 @@ func (w *writer) expr(expr syntax.Expr) {
 		var rtype types2.Type
 		if tv.IsBuiltin() {
 			switch obj, _ := lookupObj(w.p, syntax.Unparen(expr.Fun)); obj.Name() {
+			case "Some":
+				w.someLit(expr)
+				return
+
 			case "make":
 				assert(len(expr.ArgList) >= 1)
 				assert(!expr.HasDots)
@@ -2593,6 +2604,33 @@ func (w *writer) mapElems(keyType, valueType types2.Type, elems []syntax.Expr) {
 		w.implicitConvExpr(keyType, kv.Key)
 		w.implicitConvExpr(valueType, kv.Value)
 	}
+}
+
+// optionSomeTag is the tag of the Some variant of the predeclared Option type.
+// It must match the tag in types2/universe.go.
+const optionSomeTag = 1
+
+// someLit writes the call Some(x) as the composite literal
+// Option[T]{_tag: optionSomeTag, _Some_0: x}. It uses only the forms that
+// compLit writes, so the reader needs no change.
+func (w *writer) someLit(call *syntax.CallExpr) {
+	typ := w.p.typeOf(call)
+	payload := typ.(*types2.Named).TypeArgs().At(0)
+
+	w.Code(exprCompLit)
+	w.Sync(pkgbits.SyncCompLit)
+	w.pos(call)
+	w.typ(typ)
+
+	// values only: one element per field, _tag then _Some_0
+	w.Int(2)
+	w.pos(call)
+	w.Code(exprConst)
+	w.pos(call)
+	w.typ(types2.Typ[types2.Uint8])
+	w.Value(constant.MakeInt64(optionSomeTag))
+	w.pos(call.ArgList[0])
+	w.implicitConvExpr(payload, call.ArgList[0])
 }
 
 func (w *writer) structElems(typ *types2.Struct, valuesOnly bool, elems []syntax.Expr) {

@@ -52,10 +52,10 @@ func (check *Checker) isTerminating(s ast.Stmt, label string) bool {
 		}
 
 	case *ast.SwitchStmt:
-		return check.isTerminatingSwitch(s.Body, label)
+		return check.isTerminatingSwitch(s.Body, label, check.enumExhaustive[s])
 
 	case *ast.TypeSwitchStmt:
-		return check.isTerminatingSwitch(s.Body, label)
+		return check.isTerminatingSwitch(s.Body, label, false)
 
 	case *ast.SelectStmt:
 		for _, s := range s.Body.List {
@@ -86,8 +86,10 @@ func (check *Checker) isTerminatingList(list []ast.Stmt, label string) bool {
 	return false // all statements are empty
 }
 
-func (check *Checker) isTerminatingSwitch(body *ast.BlockStmt, label string) bool {
-	hasDefault := false
+// isTerminatingSwitch reports whether the switch with the given body is a
+// terminating statement. hasDefault reports that some clause always runs even
+// without a default clause, as in an enum switch that lists every variant.
+func (check *Checker) isTerminatingSwitch(body *ast.BlockStmt, label string, hasDefault bool) bool {
 	for _, s := range body.List {
 		cc := s.(*ast.CaseClause)
 		if cc.List == nil {

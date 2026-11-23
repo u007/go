@@ -1,0 +1,113 @@
+diff --git a/golang.org/x/tools/go/analysis/unitchecker/unitchecker.go b/golang.org/x/tools/go/analysis/unitchecker/unitchecker.go
+index 5b1e3fb84c..6952944f64 100644
+--- a/golang.org/x/tools/go/analysis/unitchecker/unitchecker.go
++++ b/golang.org/x/tools/go/analysis/unitchecker/unitchecker.go
+@@ -111,6 +111,10 @@ type Config struct {
+ 	// the type checker permits.
+ 	GoVersion string
+ 
++	// Strict reports that every file of the unit is checked as if
++	// it carried a //go:strict directive.
++	Strict bool
++
+ 	// GoFiles are the names of the Go source files of the unit.
+ 	// They are parsed and type-checked, and are reported to each
+ 	// analyzer as Pass.Files. The list must not be empty.
+@@ -386,6 +390,7 @@ func run(fset *token.FileSet, cfg *Config, analyzers []*analysis.Analyzer) ([]re
+ 		if err != nil {
+ 			return nil, err
+ 		}
++		f.Strict = f.Strict || cfg.Strict
+ 		files = append(files, f)
+ 	}
+ 
+diff --git a/golang.org/x/tools/internal/gcimporter/iexport.go b/golang.org/x/tools/internal/gcimporter/iexport.go
+index 9d7623b414..f068135cc1 100644
+--- a/golang.org/x/tools/internal/gcimporter/iexport.go
++++ b/golang.org/x/tools/internal/gcimporter/iexport.go
+@@ -978,6 +978,9 @@ func (w *exportWriter) doTyp(t types.Type, pkg *types.Package) {
+ 			w.p.trace("=> %s", t)
+ 		}()
+ 	}
++	if types.IsStrict(t) {
++		w.startType(strictType) // only packages with strict types use this tag
++	}
+ 	switch t := t.(type) {
+ 	case *types.Alias:
+ 		if targs := t.TypeArgs(); targs.Len() > 0 {
+diff --git a/golang.org/x/tools/internal/gcimporter/iimport.go b/golang.org/x/tools/internal/gcimporter/iimport.go
+index df11568aee..033ca382a7 100644
+--- a/golang.org/x/tools/internal/gcimporter/iimport.go
++++ b/golang.org/x/tools/internal/gcimporter/iimport.go
+@@ -86,6 +86,7 @@ const (
+ 	instanceType
+ 	unionType
+ 	aliasType
++	strictType // prefix: the pointer, signature, or interface type that follows was written in a //go:strict file
+ )
+ 
+ // Object tags
+@@ -917,6 +918,10 @@ func (r *importReader) doType(base *types.Named) (res types.Type) {
+ 		pkg, name := r.qualifiedIdent()
+ 		r.p.doDecl(pkg, name)
+ 		return pkg.Scope().Lookup(name).(*types.TypeName).Type()
++	case strictType:
++		t := r.doType(base)
++		types.MarkStrict(t)
++		return t
+ 	case pointerType:
+ 		return types.NewPointer(r.typ())
+ 	case sliceType:
+diff --git a/golang.org/x/tools/internal/gcimporter/predeclared.go b/golang.org/x/tools/internal/gcimporter/predeclared.go
+index a8bfa875fe..c035bf5df2 100644
+--- a/golang.org/x/tools/internal/gcimporter/predeclared.go
++++ b/golang.org/x/tools/internal/gcimporter/predeclared.go
+@@ -72,8 +72,10 @@ func predeclared() []types.Type {
+ 		// invalid type
+ 		types.Typ[types.Invalid], // only appears in packages with errors
+ 
+-		// used internally by gc; never used by this package or in .a files
+-		anyType{},
++		// Option[T], the predeclared generic enum; instances refer to it.
++		// It takes the slot of gc's internal any type, which no export data
++		// uses: the table is full (predeclReserved).
++		types.Universe.Lookup("Option").Type(),
+ 
+ 		// comparable
+ 		types.Universe.Lookup("comparable").Type(),
+@@ -85,8 +87,3 @@ func predeclared() []types.Type {
+ 	predecl[anyt] = decls
+ 	return decls
+ }
+-
+-type anyType struct{}
+-
+-func (t anyType) Underlying() types.Type { return t }
+-func (t anyType) String() string         { return "any" }
+diff --git a/golang.org/x/tools/internal/gcimporter/ureader.go b/golang.org/x/tools/internal/gcimporter/ureader.go
+index 09e833ce53..2f3e05582f 100644
+--- a/golang.org/x/tools/internal/gcimporter/ureader.go
++++ b/golang.org/x/tools/internal/gcimporter/ureader.go
+@@ -370,6 +370,10 @@ func (r *reader) doTyp() (res types.Type) {
+ 		return types.NewChan(dir, r.typ())
+ 	case pkgbits.TypeMap:
+ 		return types.NewMap(r.typ(), r.typ())
++	case pkgbits.TypeStrict:
++		t := r.doTyp()
++		types.MarkStrict(t)
++		return t
+ 	case pkgbits.TypePointer:
+ 		return types.NewPointer(r.typ())
+ 	case pkgbits.TypeSignature:
+diff --git a/golang.org/x/tools/internal/pkgbits/codes.go b/golang.org/x/tools/internal/pkgbits/codes.go
+index 21f44d9656..9cc4a083d1 100644
+--- a/golang.org/x/tools/internal/pkgbits/codes.go
++++ b/golang.org/x/tools/internal/pkgbits/codes.go
+@@ -58,6 +58,7 @@ const (
+ 	TypeInterface
+ 	TypeUnion
+ 	TypeTypeParam
++	TypeStrict // prefix: the pointer, function, or interface type that follows was written in a //go:strict file
+ )
+ 
+ // A CodeObj distinguishes among go/types.Object encodings.

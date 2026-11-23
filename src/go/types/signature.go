@@ -31,6 +31,7 @@ type Signature struct {
 	params   *Tuple         // (incoming) parameters from left to right; or nil
 	results  *Tuple         // (outgoing) results from left to right; or nil
 	variadic bool           // true if the last parameter's type is of the form ...T
+	strict   bool           // written in a file with //go:strict; not part of identity
 
 	// If recvold is the sentinel value [methExpr], then recvold should
 	// instead be sourced from params[0]. Otherwise, recvold points to
@@ -176,6 +177,7 @@ func (s *Signature) argType(i int) Type {
 
 // funcType type-checks a function or method type.
 func (check *Checker) funcType(sig *Signature, recvPar *ast.FieldList, ftyp *ast.FuncType) {
+	sig.strict = check.inStrictFile(ftyp.Pos())
 	check.openScope(ftyp, "function")
 	check.scope.isFunc = true
 	check.recordScope(ftyp, check.scope)
@@ -331,7 +333,7 @@ func (check *Checker) collectRecv(rparam *ast.Field, scopePos token.Pos) (*Var, 
 
 			// Reestablish pointerness if needed (but avoid a pointer to an invalid type).
 			if rptr && isValid(recvType) {
-				recvType = NewPointer(recvType)
+				recvType = check.newPointerAt(rparam.Type.Pos(), recvType)
 			}
 
 			check.recordParenthesizedRecvTypes(rparam.Type, recvType)

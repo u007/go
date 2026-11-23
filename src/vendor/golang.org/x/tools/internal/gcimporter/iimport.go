@@ -86,6 +86,7 @@ const (
 	instanceType
 	unionType
 	aliasType
+	strictType // prefix: the pointer, signature, or interface type that follows was written in a //go:strict file
 )
 
 // Object tags
@@ -917,6 +918,10 @@ func (r *importReader) doType(base *types.Named) (res types.Type) {
 		pkg, name := r.qualifiedIdent()
 		r.p.doDecl(pkg, name)
 		return pkg.Scope().Lookup(name).(*types.TypeName).Type()
+	case strictType:
+		t := r.doType(base)
+		types.MarkStrict(t)
+		return t
 	case pointerType:
 		return types.NewPointer(r.typ())
 	case sliceType:

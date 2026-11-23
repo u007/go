@@ -75,6 +75,7 @@ recheck:
 		Scopes:             make(map[syntax.Node]*types2.Scope),
 		Instances:          make(map[*syntax.Name]types2.Instance),
 		FileVersions:       make(map[*syntax.PosBase]string),
+		LenBounded:         make(map[*syntax.SliceExpr]bool),
 		// expand as needed
 	}
 	conf.Error = func(err error) {

@@ -28,6 +28,9 @@ var (
 	universeError      Type
 	universeAny        Object
 	universeComparable Object
+	universeOption     *TypeName // Option[T any]; see defPredeclaredTypes
+	universeNone       Object    // nil-like value of an Option type
+	universeSome       Object    // builtin Some(x)
 )
 
 // Typ contains the predeclared *Basic types indexed by their
@@ -114,6 +117,25 @@ func defPredeclaredTypes() {
 		NewNamed(obj, &Interface{complete: true, tset: &_TypeSet{nil, allTermlist, true}}, nil)
 		def(obj)
 	}
+
+	// type Option[T any] enum { None; Some(T) }
+	// Lowered like a user enum (see enum.go): _tag is tag 0 for None, and
+	// the payload of Some is field _Some_0. The fields have a nil package,
+	// so they are not accessible by name outside the universe.
+	{
+		obj := NewTypeName(nopos, nil, "Option", nil)
+		typ := NewNamed(obj, nil, nil)
+		tparam := NewTypeParam(NewTypeName(nopos, nil, "T", nil), &emptyInterface)
+		typ.SetTypeParams([]*TypeParam{tparam})
+		fields := []*Var{
+			NewField(nopos, nil, "_tag", Typ[Uint8], false),
+			NewField(nopos, nil, "_Some_0", tparam, false),
+		}
+		typ.fromRHS = NewStruct(fields, []string{`go:enum:"None:0;Some:1"`})
+		typ.Underlying()
+		defUniverse(obj)
+		// Some is tag 1; see optionSomeTag in noder/writer.go.
+	}
 }
 
 var predeclaredConsts = [...]struct {
@@ -134,6 +156,9 @@ func defPredeclaredConsts() {
 
 func defPredeclaredNil() {
 	def(&Nil{object{name: "nil", typ: Typ[UntypedNil]}})
+	// None is the zero value of an Option type. Like nil, it takes its type
+	// from the target type of the assignment (see implicitTypeAndValue).
+	defUniverse(&Nil{object{name: "None", typ: Typ[UntypedNil]}})
 }
 
 // A builtinId is the id of a builtin function.
@@ -159,6 +184,7 @@ const (
 	_Println
 	_Real
 	_Recover
+	_Some // Some(x) Option[T]; the one builtin in the universe scope that is exported
 
 	// package unsafe
 	_Add
@@ -198,6 +224,7 @@ var predeclaredFuncs = [...]struct {
 	_Println: {"println", statement, nil},
 	_Real:    {"real", expression, nil},
 	_Recover: {"recover", statement, nil},
+	_Some:    {"Some", expression, nil},
 
 	_Add:        {"Add", expression, nil},
 	_Alignof:    {"Alignof", expression, nil},
@@ -234,6 +261,7 @@ var builtins = [...]func(*Checker, *operand, *syntax.CallExpr){
 	_Println: (*Checker)._Println,
 	_Real:    (*Checker)._Real,
 	_Recover: (*Checker)._Recover,
+	_Some:    (*Checker)._Some,
 
 	_Add:        (*Checker)._Add,
 	_Alignof:    (*Checker)._Alignof,
@@ -252,8 +280,12 @@ func defPredeclaredFuncs() {
 	for i := range predeclaredFuncs {
 		id := builtinId(i)
 		predeclaredFuncs[id].builtin = builtins[id] // fix up predeclaredFuncs
-		if id == _Assert || id == _Trace {
+		switch id {
+		case _Assert, _Trace:
 			continue // only define these in testing environment
+		case _Some:
+			defUniverse(newBuiltin(id))
+			continue
 		}
 		def(newBuiltin(id))
 	}
@@ -287,6 +319,17 @@ func init() {
 	universeError = Universe.Lookup("error").Type()
 	universeAny = Universe.Lookup("any")
 	universeComparable = Universe.Lookup("comparable")
+	universeOption = Universe.Lookup("Option").(*TypeName)
+	universeNone = Universe.Lookup("None")
+	universeSome = Universe.Lookup("Some")
+}
+
+// defUniverse enters an exported predeclared object in the universe scope
+// rather than in package unsafe. Such an object keeps a nil package.
+func defUniverse(obj Object) {
+	if Universe.Insert(obj) != nil {
+		panic("double declaration of predeclared identifier")
+	}
 }
 
 // Objects with names containing blanks are internal and not entered into

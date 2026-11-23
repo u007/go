@@ -96,6 +96,7 @@ func (check *Checker) indexExpr(x *operand, e *syntax.IndexExpr) (isFuncInst boo
 
 	case *Pointer:
 		if typ, _ := typ.base.Underlying().(*Array); typ != nil {
+			check.strictUse(x)
 			valid = true
 			length = typ.len
 			x.mode_ = variable
@@ -116,6 +117,7 @@ func (check *Checker) indexExpr(x *operand, e *syntax.IndexExpr) (isFuncInst boo
 		var key operand
 		check.genericExpr(newTarget(typ.key, "map key"), &key, index)
 		check.assignment(&key, typ.key, "map key")
+		check.strictMapRead(e, typ.elem)
 		// ok to continue even if indexing failed - map element type is known
 		x.mode_ = mapindex
 		x.typ_ = typ.elem
@@ -190,6 +192,7 @@ func (check *Checker) indexExpr(x *operand, e *syntax.IndexExpr) (isFuncInst boo
 				var k operand
 				check.genericExpr(newTarget(key, "map key"), &k, index)
 				check.assignment(&k, key, "map key")
+				check.strictMapRead(e, elem)
 				// ok to continue even if indexing failed - map element type is known
 				x.mode_ = mapindex
 				x.typ_ = elem
@@ -323,6 +326,7 @@ func (check *Checker) sliceExpr(x *operand, e *syntax.SliceExpr) {
 
 	case *Pointer:
 		if u, _ := u.base.Underlying().(*Array); u != nil {
+			check.strictUse(x)
 			valid = true
 			length = u.len
 			x.typ_ = &Slice{elem: u.elem}
@@ -331,6 +335,7 @@ func (check *Checker) sliceExpr(x *operand, e *syntax.SliceExpr) {
 	case *Slice:
 		valid = true
 		// x.typ doesn't change
+		check.strictSliceExpr(e, u)
 	}
 
 	if !valid {

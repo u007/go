@@ -1,0 +1,120 @@
+# A main module at go 1.28 or later is strict by default.
+# "strict off" in go.mod turns it off; //go:nostrict exempts one file.
+# Strictness crosses the packages of the module.
+
+go list -m -f '{{.Strict}}'
+stdout true
+
+go build ./...
+go vet ./...
+go test ./...
+
+# A nil misuse fails the build and vet.
+cp bad.go.txt bad.go
+! go build .
+stderr 'strict: cannot use nil as \*lib.Node value'
+stderr 'strict: f may be nil here; check f != nil first'
+! go vet .
+stderr 'strict: cannot use nil as \*lib.Node value'
+
+# //go:nostrict exempts the file.
+cp nostrict.go.txt bad.go
+go build .
+go vet .
+
+# strict off turns the default off; the cached results must not be reused.
+cp bad.go.txt bad.go
+cp go.mod.off go.mod
+go list -m -f '{{.Strict}}'
+stdout false
+go build .
+go vet .
+go mod tidy
+go mod edit -fmt
+grep '^strict off$' go.mod
+
+# Back to strict: the build fails again.
+cp go.mod.on go.mod
+! go build .
+stderr 'strict: cannot use nil as \*lib.Node value'
+
+# A module before go 1.28 is not strict.
+cp go.mod.old go.mod
+go list -m -f '{{.Strict}}'
+stdout false
+
+-- go.mod --
+module example.com/m
+
+go 1.28
+-- go.mod.on --
+module example.com/m
+
+go 1.28
+-- go.mod.off --
+module example.com/m
+
+go 1.28
+
+strict off
+-- go.mod.old --
+module example.com/m
+
+go 1.27
+-- lib/lib.go --
+package lib
+
+type Node struct{ N int }
+
+func New(n int) *Node { return &Node{N: n} }
+-- lib/lib_test.go --
+package lib
+
+import "testing"
+
+func TestNew(t *testing.T) {
+	if New(2).N != 2 {
+		t.Fatal("bad")
+	}
+}
+-- main.go --
+package main
+
+import "example.com/m/lib"
+
+func use(n *lib.Node) int { return n.N }
+
+func main() {
+	n := lib.New(3)
+	println(use(n), n.N)
+}
+-- bad.go.txt --
+package main
+
+import (
+	"example.com/m/lib"
+	"os"
+)
+
+func bad() {
+	var p *lib.Node = nil
+	_ = p
+	f, _ := os.Open("x")
+	f.Close()
+}
+-- nostrict.go.txt --
+//go:nostrict
+
+package main
+
+import (
+	"example.com/m/lib"
+	"os"
+)
+
+func bad() {
+	var p *lib.Node = nil
+	_ = p
+	f, _ := os.Open("x")
+	f.Close()
+}

@@ -1,0 +1,43 @@
+diff --git a/golang.org/x/mod/modfile/rule.go b/golang.org/x/mod/modfile/rule.go
+index 5b2466fa95..c5c0d83415 100644
+--- a/golang.org/x/mod/modfile/rule.go
++++ b/golang.org/x/mod/modfile/rule.go
+@@ -39,6 +39,7 @@ type File struct {
+ 	Module    *Module
+ 	Go        *Go
+ 	Toolchain *Toolchain
++	Strict    *Strict
+ 	Godebug   []*Godebug
+ 	Require   []*Require
+ 	Exclude   []*Exclude
+@@ -63,6 +64,12 @@ type Go struct {
+ 	Syntax  *Line
+ }
+ 
++// A Strict is the strict statement: every Go file of the module is checked
++// as if it carried a //go:strict directive.
++type Strict struct {
++	Syntax *Line
++}
++
+ // A Toolchain is the toolchain statement.
+ type Toolchain struct {
+ 	Name   string // "go1.21rc1"
+@@ -402,6 +409,17 @@ func (f *File) add(errs *ErrorList, block *LineBlock, line *Line, verb string, a
+ 		f.Go = &Go{Syntax: line}
+ 		f.Go.Version = args[0]
+ 
++	case "strict":
++		if f.Strict != nil {
++			errorf("repeated strict statement")
++			return
++		}
++		if len(args) != 0 {
++			errorf("strict directive takes no arguments")
++			return
++		}
++		f.Strict = &Strict{Syntax: line}
++
+ 	case "toolchain":
+ 		if f.Toolchain != nil {
+ 			errorf("repeated toolchain statement")

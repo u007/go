@@ -370,6 +370,10 @@ func (r *reader) doTyp() (res types.Type) {
 		return types.NewChan(dir, r.typ())
 	case pkgbits.TypeMap:
 		return types.NewMap(r.typ(), r.typ())
+	case pkgbits.TypeStrict:
+		t := r.doTyp()
+		types.MarkStrict(t)
+		return t
 	case pkgbits.TypePointer:
 		return types.NewPointer(r.typ())
 	case pkgbits.TypeSignature:

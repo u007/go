@@ -20,6 +20,7 @@ type Interface struct {
 	embedPos  *[]syntax.Pos // positions of embedded elements; or nil (for error messages) - use pointer to save space
 	implicit  bool          // interface is wrapper for type set literal (non-interface T, ~T, or A|B)
 	complete  bool          // indicates that all fields (except for tset) are set up
+	strict    bool          // written in a file with //go:strict; not part of identity
 
 	tset *_TypeSet // type set described by this interface, computed lazily
 }
@@ -120,6 +121,8 @@ func (t *Interface) cleanup() {
 }
 
 func (check *Checker) interfaceType(ityp *Interface, iface *syntax.InterfaceType, def *TypeName) {
+	// The empty interface is any, which is exempt: it holds values of every origin.
+	ityp.strict = len(iface.MethodList) > 0 && check.inStrictFile(iface.Pos())
 	addEmbedded := func(pos syntax.Pos, typ Type) {
 		ityp.embeddeds = append(ityp.embeddeds, typ)
 		if ityp.embedPos == nil {

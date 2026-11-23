@@ -407,6 +407,8 @@ func TestFixedbugs(t *testing.T) {
 }                            // TODO(gri) narrow column tolerance
 func TestLocal(t *testing.T) { testDirFiles(t, "testdata/local", 0, false) }
 
+func TestStrict(t *testing.T) { testDirFiles(t, "testdata/strict", 0, false) }
+
 func testDirFiles(t *testing.T, dir string, colDelta uint, manual bool) {
 	testenv.MustHaveGoBuild(t)
 	dir = filepath.FromSlash(dir)

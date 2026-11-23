@@ -26,6 +26,7 @@ type ModulePublic struct {
 	Dir        string           `json:",omitempty"` // directory holding local copy of files, if any
 	GoMod      string           `json:",omitempty"` // path to go.mod file describing module, if any
 	GoVersion  string           `json:",omitempty"` // go version used in module
+	Strict     bool             `json:",omitempty"` // files are strict by default: a main module at go 1.28 or later without "strict off"
 	Retracted  []string         `json:",omitempty"` // retraction information, if any (with -retracted or -u)
 	Deprecated string           `json:",omitempty"` // deprecation message, if any (with -u)
 	Error      *ModuleError     `json:",omitempty"` // error loading module

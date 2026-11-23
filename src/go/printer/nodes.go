@@ -489,6 +489,36 @@ func (p *printer) setLineComment(text string) {
 	p.setComment(&ast.CommentGroup{List: []*ast.Comment{{Slash: token.NoPos, Text: text}}})
 }
 
+// enumType prints the body of an enum type, including its variants.
+// The "enum" keyword and its preceding whitespace are printed by the caller.
+func (p *printer) enumType(x *ast.EnumType) {
+	p.print(blank)
+	p.print(token.LBRACE)
+	if len(x.Variants) > 0 {
+		p.print(indent, formfeed)
+		for i, v := range x.Variants {
+			if i > 0 {
+				p.print(formfeed)
+			}
+			p.expr(v.Name)
+			if v.Lparen.IsValid() {
+				p.setPos(v.Lparen)
+				p.print(token.LPAREN)
+				for j, t := range v.Payload {
+					if j > 0 {
+						p.print(token.COMMA, blank)
+					}
+					p.expr(t)
+				}
+				p.setPos(v.Rparen)
+				p.print(token.RPAREN)
+			}
+		}
+		p.print(unindent, formfeed)
+	}
+	p.print(token.RBRACE)
+}
+
 func (p *printer) fieldList(fields *ast.FieldList, isStruct, isIncomplete bool) {
 	lbrace := fields.Opening
 	list := fields.List
@@ -1049,6 +1079,11 @@ func (p *printer) expr1(expr ast.Expr, prec1, depth int) {
 	case *ast.StructType:
 		p.print(token.STRUCT)
 		p.fieldList(x.Fields, true, x.Incomplete)
+
+	case *ast.EnumType:
+		p.setPos(x.Enum)
+		p.print("enum")
+		p.enumType(x)
 
 	case *ast.FuncType:
 		p.print(token.FUNC)

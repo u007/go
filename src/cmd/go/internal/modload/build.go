@@ -313,6 +313,11 @@ func moduleInfo(ld *Loader, ctx context.Context, rs *Requirements, m module.Vers
 		} else {
 			panic("internal error: GoVersion not set for main module")
 		}
+		// A main module at go 1.28 or later is strict unless its go.mod says
+		// "strict off". GOROOT is exempt: the standard library is not strict.
+		if f := ld.MainModules.ModFile(m); f != nil && !ld.MainModules.InGorootSrc(m) {
+			info.Strict = f.Strict == nil && gover.Compare(info.GoVersion, "1.28") >= 0
+		}
 		if modRoot := ld.MainModules.ModRoot(m); modRoot != "" {
 			info.Dir = modRoot
 			info.GoMod = modFilePath(modRoot)

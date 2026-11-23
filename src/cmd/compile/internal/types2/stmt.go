@@ -25,10 +25,11 @@ func (check *Checker) funcBody(decl *declInfo, name string, sig *Signature, body
 
 	// save/restore current environment and set up function environment
 	// (and use 0 indentation at function start)
-	defer func(env environment, indent int) {
+	defer func(env environment, indent int, flow *flowState) {
 		check.environment = env
 		check.indent = indent
-	}(check.environment, check.indent)
+		check.flow = flow
+	}(check.environment, check.indent, check.flow)
 	check.environment = environment{
 		decl:    decl,
 		scope:   sig.scope,
@@ -37,6 +38,7 @@ func (check *Checker) funcBody(decl *declInfo, name string, sig *Signature, body
 		sig:     sig,
 	}
 	check.indent = 0
+	check.flow = check.flowEnter(body, sig, check.flow)
 
 	check.stmtList(0, body.List)
 
@@ -412,6 +414,12 @@ L:
 
 // stmt typechecks statement s.
 func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
+	check.stmtLabeled(ctxt, s, "")
+}
+
+// stmtLabeled typechecks statement s, which is labeled with label ("" if none).
+// The label matters to the flow facts of a loop, switch or select (see hasBreak).
+func (check *Checker) stmtLabeled(ctxt stmtContext, s syntax.Stmt, label string) {
 	// statements must end with the same top scope as they started with
 	if debug {
 		defer func(scope *Scope) {
@@ -438,7 +446,7 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 
 	case *syntax.LabeledStmt:
 		check.hasLabel = true
-		check.stmt(ctxt, s.Stmt)
+		check.stmtLabeled(ctxt, s.Stmt, s.Label.Value)
 
 	case *syntax.ExprStmt:
 		// spec: "With the exception of specific built-in functions,
@@ -446,6 +454,7 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 		// in statement context. Such statements may be parenthesized."
 		var x operand
 		kind := check.rawExpr(nil, &x, s.X, false)
+		check.flowPanicStmt(s.X)
 		var msg string
 		var code Code
 		switch x.mode() {
@@ -501,10 +510,13 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 		rhs := syntax.UnpackListExpr(s.Rhs)
 		switch s.Op {
 		case 0:
+			check.flowWrites(lhs...)
 			check.assignVars(lhs, rhs)
+			check.flowAssign(lhs...)
 			return
 		case syntax.Def:
 			check.shortVarDecl(s.Pos(), lhs, rhs)
+			check.flowAssign(lhs...)
 			return
 		}
 
@@ -550,8 +562,12 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 			}
 			check.initVars(lhs, results, s)
 		}
+		check.flowDead()
 
 	case *syntax.BranchStmt:
+		if s.Tok != syntax.Fallthrough {
+			check.flowDead() // the switch takes the state of a fallthrough clause
+		}
 		if s.Label != nil {
 			check.hasLabel = true
 			break // checked in 2nd pass (check.labels)
@@ -604,9 +620,15 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 		if x.isValid() && !allBoolean(x.typ()) {
 			check.error(s.Cond, InvalidCond, "non-boolean condition in if statement")
 		}
+		fork := check.flowForkBegin()
+		check.flowBranchBegin(fork)
+		check.flowRefine(s.Cond, true)
 		check.stmt(inner, s.Then)
+		check.flowBranchEnd(fork, nil, false)
 		// The parser produces a correct AST but if it was modified
 		// elsewhere the else branch may be invalid. Check again.
+		check.flowBranchBegin(fork)
+		check.flowRefine(s.Cond, false)
 		switch s.Else.(type) {
 		case nil:
 			// valid or error already reported
@@ -615,18 +637,24 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 		default:
 			check.error(s.Else, InvalidSyntaxTree, "invalid else branch in if statement")
 		}
+		check.flowBranchEnd(fork, nil, false)
+		check.flowForkEnd(fork)
 
 	case *syntax.SwitchStmt:
 		inner |= breakOk
 		check.openScope(s, "switch")
 		defer check.closeScope()
 
-		check.simpleStmt(s.Init)
+		// The tag of an inner enum switch is a generated selector (see enumSwitch).
+		// Its init statement holds the checked tag and declares the temporary.
+		if !check.enumGen[s.Tag] {
+			check.simpleStmt(s.Init)
+		}
 
 		if g, _ := s.Tag.(*syntax.TypeSwitchGuard); g != nil {
-			check.typeSwitchStmt(inner|inTypeSwitch, s, g)
+			check.typeSwitchStmt(inner|inTypeSwitch, s, g, label)
 		} else {
-			check.switchStmt(inner, s)
+			check.switchStmt(inner, s, label)
 		}
 
 	case *syntax.SelectStmt:
@@ -634,6 +662,7 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 
 		check.multipleSelectDefaults(s.Body)
 
+		fork := check.flowForkBegin()
 		for _, clause := range s.Body {
 			if clause == nil {
 				continue // error reported before
@@ -664,13 +693,16 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 				check.error(clause.Comm, InvalidSelectCase, "select case must be send or receive (possibly with assignment)")
 				continue
 			}
+			check.flowBranchBegin(fork)
 			check.openScope(clause, "case")
 			if clause.Comm != nil {
 				check.stmt(inner, clause.Comm)
 			}
 			check.stmtList(inner, clause.Body)
 			check.closeScope()
+			check.flowBranchEnd(fork, clause, hasBreakList(clause.Body, label, true))
 		}
+		check.flowForkEnd(fork)
 
 	case *syntax.ForStmt:
 		inner |= breakOk | continueOk
@@ -692,7 +724,13 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 					sExtra = p.ElemList[2]
 				}
 			}
+			if !rclause.Def {
+				check.flowWrites(sKey, sValue)
+			}
+			entry := check.flowLoopEnter(s)
+			check.flowLoopBody(entry)
 			check.rangeStmt(inner, s, s, sKey, sValue, sExtra, rclause.X, rclause.Def)
+			check.flowLoopExit(entry, false)
 			break
 		}
 
@@ -700,6 +738,10 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 		defer check.closeScope()
 
 		check.simpleStmt(s.Init)
+		// The condition and the post statement run again after the body, so
+		// they are checked from the loop entry state, like the body.
+		entry := check.flowLoopEnter(s)
+		check.flowLoopBody(entry)
 		if s.Cond != nil {
 			var x operand
 			check.expr(nil, &x, s.Cond)
@@ -714,19 +756,29 @@ func (check *Checker) stmt(ctxt stmtContext, s syntax.Stmt) {
 			// The parser already reported an error.
 			check.use(s.Lhs) // avoid follow-up errors
 		}
+		check.flowLoopBody(entry)
 		check.stmt(inner, s.Body)
+		check.flowLoopExit(entry, s.Cond == nil && !hasBreak(s.Body, label, true))
 
 	default:
 		check.error(s, InvalidSyntaxTree, "invalid statement")
 	}
 }
 
-func (check *Checker) switchStmt(inner stmtContext, s *syntax.SwitchStmt) {
+func (check *Checker) switchStmt(inner stmtContext, s *syntax.SwitchStmt, label string) {
 	// init statement already handled
 
 	var x operand
 	if s.Tag != nil {
 		check.expr(nil, &x, s.Tag)
+		if info := enumInfoOf(x.typ()); x.isValid() && info != nil {
+			// Rewrite the enum switch into a switch on the tag and check that.
+			if !check.enumSwitch(s, &x, info) {
+				return
+			}
+			check.switchStmt(inner, s, label)
+			return
+		}
 		// By checking assignment of x to an invisible temporary
 		// (as a compiler would), we get all the relevant checks.
 		check.assignment(&x, nil, "switch expression")
@@ -751,6 +803,10 @@ func (check *Checker) switchStmt(inner stmtContext, s *syntax.SwitchStmt) {
 	check.multipleSwitchDefaults(s.Body)
 
 	seen := make(valueMap) // map of seen case values to positions and types
+	fork := check.flowForkBegin()
+	narrow := check.flow != nil
+	var fall *flowState // the state at the end of the previous clause, if it falls through
+	hasDefault := false
 	for i, clause := range s.Body {
 		if clause == nil {
 			check.error(clause, InvalidSyntaxTree, "incorrect expression switch case")
@@ -762,14 +818,53 @@ func (check *Checker) switchStmt(inner stmtContext, s *syntax.SwitchStmt) {
 		} else {
 			inner |= finalSwitchCase
 		}
-		check.caseValues(&x, syntax.UnpackListExpr(clause.Cases), seen)
+		if clause.Cases == nil {
+			hasDefault = true
+		}
+		check.flowBranchBegin(fork)
+		cases := syntax.UnpackListExpr(clause.Cases)
+		if narrow && clause.Cases == nil {
+			// The default clause runs only if every case is false, wherever it is.
+			for _, c := range s.Body {
+				if c != nil {
+					for _, e := range syntax.UnpackListExpr(c.Cases) {
+						check.flowRefine(flowCaseCond(s, e), false)
+					}
+				}
+			}
+		}
+		check.caseValues(&x, cases, seen)
+		if narrow && len(cases) == 1 {
+			check.flowRefine(flowCaseCond(s, cases[0]), true)
+		}
+		if fall != nil {
+			// Entered by case or by fallthrough: only what both paths establish holds.
+			check.flow = joinFlow(check.flow, fall)
+		}
 		check.openScope(clause, "case")
 		check.stmtList(inner, clause.Body)
 		check.closeScope()
+		fall = nil
+		if hasFallthrough(clause.Body) {
+			fall = check.flow.clone()
+			check.flowDead()
+		}
+		check.flowBranchEnd(fork, clause, hasBreakList(clause.Body, label, true))
+		if narrow {
+			for _, e := range cases {
+				check.flowCaseFalse(fork, s, e)
+			}
+		}
 	}
+	if !hasDefault {
+		// Without a default clause, no clause may run: the entry state is a branch.
+		check.flowBranchBegin(fork)
+		check.flowBranchEnd(fork, nil, false)
+	}
+	check.flowForkEnd(fork)
 }
 
-func (check *Checker) typeSwitchStmt(inner stmtContext, s *syntax.SwitchStmt, guard *syntax.TypeSwitchGuard) {
+func (check *Checker) typeSwitchStmt(inner stmtContext, s *syntax.SwitchStmt, guard *syntax.TypeSwitchGuard, label string) {
 	// init statement already handled
 
 	// A type switch guard must be of the form:
@@ -809,19 +904,33 @@ func (check *Checker) typeSwitchStmt(inner stmtContext, s *syntax.SwitchStmt, gu
 
 	var lhsVars []*Var                 // list of implicitly declared lhs variables
 	seen := make(map[Type]syntax.Expr) // map of seen types to positions
+	fork := check.flowForkBegin()
+	hasDefault := false
 	for _, clause := range s.Body {
 		if clause == nil {
 			check.error(s, InvalidSyntaxTree, "incorrect type switch case")
 			continue
 		}
+		if clause.Cases == nil {
+			hasDefault = true
+		}
+		check.flowBranchBegin(fork)
 		// Check each type in this type switch case.
 		cases := syntax.UnpackListExpr(clause.Cases)
 		T := check.caseTypes(sx, cases, seen)
 		check.openScope(clause, "case")
 		// If lhs exists, declare a corresponding variable in the case-local scope.
 		if lhs != nil {
+			single := len(cases) == 1 && !check.isNil(cases[0]) // otherwise T is the type of x, not an asserted type
+			iface := single && isNonTypeParamInterface(T)
+			if single {
+				T = check.strictAssertType(lhs, T)
+			}
 			obj := newVar(LocalVar, lhs.Pos(), check.pkg, lhs.Value, T)
 			check.declare(check.scope, nil, obj, clause.Colon)
+			if iface {
+				check.flowSetNonNil(obj) // a nil interface matches no interface case
+			}
 			check.recordImplicit(clause, obj)
 			// For the "declared and not used" error, all lhs variables act as
 			// one; i.e., if any one of them is 'used', all of them are 'used'.
@@ -830,7 +939,14 @@ func (check *Checker) typeSwitchStmt(inner stmtContext, s *syntax.SwitchStmt, gu
 		}
 		check.stmtList(inner, clause.Body)
 		check.closeScope()
+		check.flowBranchEnd(fork, clause, hasBreakList(clause.Body, label, true))
 	}
+	if !hasDefault {
+		// Without a default clause, no clause may run: the entry state is a branch.
+		check.flowBranchBegin(fork)
+		check.flowBranchEnd(fork, nil, false)
+	}
+	check.flowForkEnd(fork)
 
 	// If lhs exists, we must have at least one lhs variable that was used.
 	// (We can't use check.usage because that only looks at one scope; and

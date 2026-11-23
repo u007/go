@@ -56,12 +56,18 @@ var operandModeString = [...]string{
 // the operand, the operand's type, a value for constants, and an id
 // for built-in functions.
 // The zero value of operand is a ready to use invalid operand.
+//
+// nonNull reports that the operand's value is proven non-nil. The zero value
+// (false) means possibly nil. Operands are copied by value, so the flag travels
+// with copies; code that changes an operand's mode, type, or expression must
+// also clear or set nonNull.
 type operand struct {
-	mode_ operandMode
-	expr  ast.Expr
-	typ_  Type
-	val   constant.Value
-	id    builtinId
+	mode_   operandMode
+	expr    ast.Expr
+	typ_    Type
+	val     constant.Value
+	id      builtinId
+	nonNull bool
 }
 
 func (x *operand) mode() operandMode {
@@ -138,17 +144,24 @@ func operandString(x *operand, qf Qualifier) string {
 	// special-case nil
 	if isTypes2 {
 		if x.mode() == nilvalue {
+			name := "nil"
+			if isNone(x) {
+				name = "None"
+			}
 			switch x.typ() {
 			case nil, Typ[Invalid]:
-				return "nil (with invalid type)"
+				return name + " (with invalid type)"
 			case Typ[UntypedNil]:
-				return "nil"
+				return name
 			default:
-				return fmt.Sprintf("nil (of type %s)", TypeString(x.typ(), qf))
+				return fmt.Sprintf("%s (of type %s)", name, TypeString(x.typ(), qf))
 			}
 		}
 	} else { // go/types
 		if x.mode() == value && x.typ() == Typ[UntypedNil] {
+			if isNone(x) {
+				return "None"
+			}
 			return "nil"
 		}
 	}

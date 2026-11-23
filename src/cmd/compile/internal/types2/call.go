@@ -255,6 +255,7 @@ func (check *Checker) callExpr(x *operand, call *syntax.CallExpr) exprKind {
 	// ordinary function/method call
 	// signature may be generic
 	cgocall := x.mode() == cgofunc
+	check.strictUse(x)
 
 	// If the operand type is a type parameter, all types in its type set
 	// must have a common underlying type, which must be a signature.
@@ -698,6 +699,7 @@ func (check *Checker) selector(x *operand, e *syntax.SelectorExpr, wantType bool
 		obj      Object
 		index    []int
 		indirect bool
+		pkg      *Package // the package that selects the field or method
 	)
 
 	sel := e.Sel.Value
@@ -780,7 +782,7 @@ func (check *Checker) selector(x *operand, e *syntax.SelectorExpr, wantType bool
 				}
 			case *Func:
 				x.mode_ = funcMode
-				x.typ_ = exp.typ
+				x.typ_ = check.strictFuncValue(e.Sel.Pos(), exp.typ)
 				if pkg.cgo && strings.HasPrefix(exp.name, "_Cmacro_") {
 					x.mode_ = value
 					x.typ_ = x.typ().(*Signature).results.vars[0].typ
@@ -833,7 +835,15 @@ func (check *Checker) selector(x *operand, e *syntax.SelectorExpr, wantType bool
 		goto Error
 	}
 
-	obj, index, indirect = lookupFieldOrMethod(x.typ(), x.mode() == variable, check.pkg, sel, false)
+	if check.strictUse(x) {
+		goto Error
+	}
+	pkg = check.pkg
+	if isEnumTmp(e.X) {
+		// An enum switch reads the fields of its enum, which may be imported.
+		pkg = x.typ().Underlying().(*Struct).fields[0].pkg
+	}
+	obj, index, indirect = lookupFieldOrMethod(x.typ(), x.mode() == variable, pkg, sel, false)
 	if obj == nil {
 		// Don't report another error if the underlying type was invalid (go.dev/issue/49541).
 		if !isValid(x.typ().Underlying()) {
@@ -876,12 +886,17 @@ func (check *Checker) selector(x *operand, e *syntax.SelectorExpr, wantType bool
 
 		// field value
 		check.recordSelection(e, FieldVal, x.typ(), obj, index, indirect)
+		T := x.typ()
 		if x.mode() == variable || indirect {
 			x.mode_ = variable
 		} else {
 			x.mode_ = value
 		}
 		x.typ_ = obj.typ
+		// A selector that is an assignment target is a write, not a read.
+		if syntax.Expr(e) != check.strictLHS && !isEnumTmp(e.X) && check.strictPayloadRead(x, T, index, obj) {
+			goto Error
+		}
 
 	case *Func:
 		check.objDecl(obj) // ensure fully set-up signature
@@ -926,9 +941,16 @@ func (check *Checker) selector(x *operand, e *syntax.SelectorExpr, wantType bool
 				params:   NewTuple(params...),
 				results:  sig.results,
 				variadic: sig.variadic,
+				strict:   check.inStrictFile(e.Pos()),
 			}
 		} else {
 			// method value
+
+			// A pointer receiver is passed to a strict parameter, so it must
+			// be proven non-nil.
+			if check.strictRecv(x, index, obj) {
+				goto Error
+			}
 
 			// TODO(gri) If we needed to take into account the receiver's
 			// addressability, should we report the type &(x.typ) instead?
@@ -940,6 +962,7 @@ func (check *Checker) selector(x *operand, e *syntax.SelectorExpr, wantType bool
 			sig := *obj.typ.(*Signature)
 			sig.recvold = sig.recv
 			sig.recv = nil
+			sig.strict = check.inStrictFile(e.Pos())
 			x.typ_ = &sig
 		}
 

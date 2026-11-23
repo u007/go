@@ -124,6 +124,9 @@ var builtinCalls = []struct {
 	{"recover", `recover()`, `func() interface{}`},
 	{"recover", `_ = recover()`, `func() interface{}`},
 
+	{"Some", `_ = Some(1)`, `func(int) Option[int]`},
+	{"Some", `type T struct{}; _ = Some(T{})`, `func(p.T) Option[p.T]`},
+
 	{"Add", `var p unsafe.Pointer; _ = unsafe.Add(p, -1.0)`, `func(unsafe.Pointer, int) unsafe.Pointer`},
 	{"Add", `var p unsafe.Pointer; var n uintptr; _ = unsafe.Add(p, n)`, `func(unsafe.Pointer, uintptr) unsafe.Pointer`},
 	{"Add", `_ = unsafe.Add(nil, 0)`, `func(unsafe.Pointer, int) unsafe.Pointer`},

@@ -138,7 +138,9 @@ func main() {
 	//     59  .  .  0: *(obj @ 29)
 	//     60  .  }
 	//     61  .  GoVersion: ""
-	//     62  }
+	//     62  .  Strict: false
+	//     63  .  NoStrict: false
+	//     64  }
 }
 
 func ExamplePreorder() {

@@ -377,6 +377,7 @@ func (check *Checker) varDecl(obj *Var, lhs []*Var, typ, init syntax.Expr) {
 			// error reported before by arityMatch
 			obj.typ = Typ[Invalid]
 		}
+		check.strictPkgVarNoInit(obj)
 		return
 	}
 
@@ -684,6 +685,7 @@ func (check *Checker) funcDecl(obj *Func, decl *declInfo) {
 
 	fdecl := decl.fdecl
 	check.funcType(sig, fdecl.Recv, fdecl.TParamList, fdecl.Type)
+	check.strictNamedResults(fdecl.Type, sig.results)
 
 	if fdecl.Pragma != nil {
 		if p, ok := fdecl.Pragma.(interface{ Nointerface() bool }); ok && p.Nointerface() {
@@ -828,6 +830,7 @@ func (check *Checker) declStmt(list []syntax.Decl) {
 				// see constant declarations
 				check.declare(check.scope, name, lhs0[i], scopePos)
 			}
+			check.flowDeclare(s, lhs0)
 
 		case *syntax.TypeDecl:
 			obj := NewTypeName(s.Name.Pos(), pkg, s.Name.Value, nil)

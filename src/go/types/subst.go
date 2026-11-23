@@ -135,6 +135,18 @@ func (subst *subster) typ(typ Type) Type {
 	case *Struct:
 		if fields := substList(t.fields, subst.var_); fields != nil {
 			s := &Struct{fields: fields, tags: t.tags}
+			if t.enumInfo != nil {
+				// An instantiated enum is still an enum.
+				variants := make([]EnumVariantInfo, len(t.enumInfo.Variants))
+				for i, v := range t.enumInfo.Variants {
+					payload := make([]Type, len(v.PayloadTypes))
+					for j, pt := range v.PayloadTypes {
+						payload[j] = subst.typ(pt)
+					}
+					variants[i] = EnumVariantInfo{Name: v.Name, Tag: v.Tag, PayloadTypes: payload}
+				}
+				s.enumInfo = &EnumInfo{Variants: variants}
+			}
 			s.markComplete()
 			return s
 		}
@@ -142,7 +154,7 @@ func (subst *subster) typ(typ Type) Type {
 	case *Pointer:
 		base := subst.typ(t.base)
 		if base != t.base {
-			return &Pointer{base: base}
+			return &Pointer{base: base, strict: t.strict}
 		}
 
 	case *Tuple:
@@ -253,6 +265,7 @@ func (subst *subster) typ(typ Type) Type {
 				params:   params,
 				results:  results,
 				variadic: t.variadic,
+				strict:   t.strict,
 			}
 		}
 
@@ -278,6 +291,7 @@ func (subst *subster) typ(typ Type) Type {
 			iface.embeddeds = embeddeds
 			iface.embedPos = t.embedPos
 			iface.implicit = t.implicit
+			iface.strict = t.strict
 			assert(t.complete) // otherwise we are copying incomplete data
 			iface.complete = t.complete
 			// If we've changed the interface type, we may need to replace its

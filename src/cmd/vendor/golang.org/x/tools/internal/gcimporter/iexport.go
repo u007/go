@@ -978,6 +978,9 @@ func (w *exportWriter) doTyp(t types.Type, pkg *types.Package) {
 			w.p.trace("=> %s", t)
 		}()
 	}
+	if types.IsStrict(t) {
+		w.startType(strictType) // only packages with strict types use this tag
+	}
 	switch t := t.(type) {
 	case *types.Alias:
 		if targs := t.TypeArgs(); targs.Len() > 0 {

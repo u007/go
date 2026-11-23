@@ -3709,7 +3709,7 @@ func (s *state) exprCheckPtr(n ir.Node, checkPtrOK bool) *ssa.Value {
 		if n.Max != nil {
 			k = s.expr(n.Max)
 		}
-		p, l, c := s.slice(v, i, j, k, n.Bounded())
+		p, l, c := s.slice(v, i, j, k, n.Bounded(), n.LenBound)
 		if check {
 			// Emit checkptr instrumentation after bound check to prevent false positive, see #46938.
 			s.checkPtrAlignment(n.X.(*ir.ConvExpr), v, s.conv(n.Max, k, k.Type, types.Types[types.TUINTPTR]))
@@ -3726,7 +3726,7 @@ func (s *state) exprCheckPtr(n ir.Node, checkPtrOK bool) *ssa.Value {
 		if n.High != nil {
 			j = s.expr(n.High)
 		}
-		p, l, _ := s.slice(v, i, j, nil, n.Bounded())
+		p, l, _ := s.slice(v, i, j, nil, n.Bounded(), false)
 		return s.newValue2(ssaop.OpStringMake, n.Type(), p, l)
 
 	case ir.OSLICE2ARRPTR:
@@ -5850,7 +5850,7 @@ func (s *state) putArg(n ir.Node, t *types.Type) *ssa.Value {
 // slice computes the slice v[i:j:k] and returns ptr, len, and cap of result.
 // i,j,k may be nil, in which case they are set to their default value.
 // v may be a slice, string or pointer to an array.
-func (s *state) slice(v, i, j, k *ssa.Value, bounded bool) (p, l, c *ssa.Value) {
+func (s *state) slice(v, i, j, k *ssa.Value, bounded, lenBound bool) (p, l, c *ssa.Value) {
 	t := v.Type
 	var ptr, len, cap *ssa.Value
 	switch {
@@ -5880,6 +5880,9 @@ func (s *state) slice(v, i, j, k *ssa.Value, bounded bool) (p, l, c *ssa.Value) 
 	}
 	if j == nil {
 		j = len
+	} else if lenBound {
+		// A strict slice must not grow into its capacity (see ir.SliceExpr.LenBound).
+		j = s.boundsCheck(j, len, ssa.BoundsSliceAlen, false)
 	}
 	three := true
 	if k == nil {

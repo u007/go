@@ -39,6 +39,7 @@ type File struct {
 	Module    *Module
 	Go        *Go
 	Toolchain *Toolchain
+	Strict    *Strict
 	Godebug   []*Godebug
 	Require   []*Require
 	Exclude   []*Exclude
@@ -61,6 +62,12 @@ type Module struct {
 type Go struct {
 	Version string // "1.23"
 	Syntax  *Line
+}
+
+// A Strict is the "strict off" statement: the Go files of the module are not
+// checked as strict by default. A file can still carry a //go:strict directive.
+type Strict struct {
+	Syntax *Line
 }
 
 // A Toolchain is the toolchain statement.
@@ -401,6 +408,17 @@ func (f *File) add(errs *ErrorList, block *LineBlock, line *Line, verb string, a
 
 		f.Go = &Go{Syntax: line}
 		f.Go.Version = args[0]
+
+	case "strict":
+		if f.Strict != nil {
+			errorf("repeated strict statement")
+			return
+		}
+		if len(args) != 1 || args[0] != "off" {
+			errorf("usage: strict off")
+			return
+		}
+		f.Strict = &Strict{Syntax: line}
 
 	case "toolchain":
 		if f.Toolchain != nil {

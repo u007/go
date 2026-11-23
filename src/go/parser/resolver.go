@@ -336,6 +336,12 @@ func (r *resolver) Visit(node ast.Node) ast.Visitor {
 		defer r.closeScope()
 		r.walkFieldList(n.Fields, ast.Var)
 
+	case *ast.EnumType:
+		// Variant names are not uses; only the payload types are resolved.
+		for _, v := range n.Variants {
+			r.walkExprs(v.Payload)
+		}
+
 	case *ast.FuncType:
 		r.openScope(n.Pos())
 		defer r.closeScope()

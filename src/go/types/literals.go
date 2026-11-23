@@ -83,6 +83,7 @@ func (check *Checker) basicLit(x *operand, e *ast.BasicLit) {
 
 func (check *Checker) funcLit(x *operand, e *ast.FuncLit) {
 	if sig, ok := check.typ(e.Type).(*Signature); ok {
+		check.strictNamedResults(e.Type, sig.results)
 		// Set the Scope's extent to the complete "func (...) {...}"
 		// so that Scope.Innermost works correctly.
 		sig.scope.pos = e.Pos()
@@ -93,12 +94,17 @@ func (check *Checker) funcLit(x *operand, e *ast.FuncLit) {
 			// them: use existing package-level declaration info.
 			decl := check.decl // capture for use in closure below
 			iota := check.iota // capture for use in closure below (go.dev/issue/22345)
+			// The body sees the flow facts at this literal, not those at the
+			// later point where the body is checked (see flowSnapshot).
+			flow := check.flowSnapshot()
 			// Don't type-check right away because the function may
 			// be part of a type definition to which the function
 			// body refers. Instead, type-check as soon as possible,
 			// but before the enclosing scope contents changes (go.dev/issue/22992).
 			check.later(func() {
-				check.funcBody(decl, "<function literal>", sig, e.Body, iota)
+				check.flowClosure(flow, func() {
+					check.funcBody(decl, "<function literal>", sig, e.Body, iota)
+				})
 			}).describef(e, "func literal")
 		}
 		x.mode_ = value
@@ -159,6 +165,7 @@ func (check *Checker) compositeLit(T *target, x *operand, e *ast.CompositeLit) {
 
 	switch u, _ := commonUnder(base, nil); utyp := u.(type) {
 	case *Struct:
+		check.strictStructLit(e, base, utyp)
 		if len(e.Elts) == 0 {
 			break
 		}
@@ -274,6 +281,7 @@ func (check *Checker) compositeLit(T *target, x *operand, e *ast.CompositeLit) {
 				check.recordTypeAndValue(e.Type, typexpr, utyp, nil)
 			}
 		}
+		check.strictArrayLit(e, base, utyp)
 
 	case *Slice:
 		check.indexedElts(e.Elts, utyp.elem, -1)

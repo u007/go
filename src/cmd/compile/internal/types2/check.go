@@ -139,6 +139,11 @@ type Checker struct {
 	// maps and lists are allocated on demand)
 	files         []*syntax.File             // list of package files
 	versions      map[*syntax.PosBase]string // maps files to version strings (each file has an entry); shared with Info.FileVersions if present; may be unaltered Config.GoVersion
+	strictFiles   map[*syntax.PosBase]bool   // files with a //go:strict directive; see inStrictFile
+	flowProofs    map[*Var]bool              // whether the value last assigned to a variable is proven non-nil; see flowProve
+	flow          *flowState                 // flow facts of the current function body; nil if not tracked; see strict_flow.go
+	enumGen       map[syntax.Expr]bool       // field selectors and panic names generated for enum switches
+	strictLHS     syntax.Expr                // the assignment target being evaluated by lhsVar; a map index equal to it is a write, not a read
 	imports       []*PkgName                 // list of imported packages
 	dotImportMap  map[dotImportKey]*PkgName  // maps dot-imported objects to the package they were dot-imported through
 	brokenAliases map[*TypeName]bool         // set of aliases with broken (not yet determined) types
@@ -263,6 +268,7 @@ func (check *Checker) initFiles(files []*syntax.File) {
 	// TODO(gri): what determines which fields are zeroed out here, vs at the end
 	// of checkFiles?
 	check.files = nil
+	check.strictFiles = nil
 	check.imports = nil
 	check.dotImportMap = nil
 
@@ -345,6 +351,13 @@ func (check *Checker) initFiles(files []*syntax.File) {
 			}
 		}
 		versions[file.Pos().FileBase()] = v // file.Pos().FileBase() may be nil for tests
+
+		if file.Strict {
+			if check.strictFiles == nil {
+				check.strictFiles = make(map[*syntax.PosBase]bool)
+			}
+			check.strictFiles[file.Pos().FileBase()] = true
+		}
 	}
 }
 

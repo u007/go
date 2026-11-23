@@ -143,15 +143,21 @@ type Checker struct {
 	// information collected during type-checking of a set of package files
 	// (initialized by Files, valid only for the duration of check.Files;
 	// maps and lists are allocated on demand)
-	files         []*ast.File               // package files
-	versions      map[*ast.File]string      // maps files to goVersion strings (each file has an entry); shared with Info.FileVersions if present; may be unaltered Config.GoVersion
-	imports       []*PkgName                // list of imported packages
-	dotImportMap  map[dotImportKey]*PkgName // maps dot-imported objects to the package they were dot-imported through
-	brokenAliases map[*TypeName]bool        // set of aliases with broken (not yet determined) types
-	unionTypeSets map[*Union]*_TypeSet      // computed type sets for union types
-	usedVars      map[*Var]bool             // set of used variables
-	usedPkgNames  map[*PkgName]bool         // set of used package names
-	mono          monoGraph                 // graph for detecting non-monomorphizable instantiation loops
+	files          []*ast.File               // package files
+	versions       map[*ast.File]string      // maps files to goVersion strings (each file has an entry); shared with Info.FileVersions if present; may be unaltered Config.GoVersion
+	strictFiles    map[*token.File]bool      // files with a //go:strict directive; see inStrictFile
+	flowProofs     map[*Var]bool             // whether the value last assigned to a variable is proven non-nil; see flowProve
+	flow           *flowState                // flow facts of the current function body; nil if not tracked; see strict_flow.go
+	enumDecls      map[*ast.File][]ast.Decl  // enum constructors and tag constants per file, declared with the file's declarations; see enumConstructorDecls
+	enumExhaustive map[*ast.SwitchStmt]bool  // enum switches that list every variant and so need no default clause
+	strictLHS      ast.Expr                  // the assignment target being evaluated by lhsVar; a map index equal to it is a write, not a read
+	imports        []*PkgName                // list of imported packages
+	dotImportMap   map[dotImportKey]*PkgName // maps dot-imported objects to the package they were dot-imported through
+	brokenAliases  map[*TypeName]bool        // set of aliases with broken (not yet determined) types
+	unionTypeSets  map[*Union]*_TypeSet      // computed type sets for union types
+	usedVars       map[*Var]bool             // set of used variables
+	usedPkgNames   map[*PkgName]bool         // set of used package names
+	mono           monoGraph                 // graph for detecting non-monomorphizable instantiation loops
 
 	firstErr   error                 // first error encountered
 	methods    map[*TypeName][]*Func // maps package scope type names to associated non-blank (non-interface) methods
@@ -270,6 +276,7 @@ func (check *Checker) initFiles(files []*ast.File) {
 	// TODO(gri): what determines which fields are zeroed out here, vs at the end
 	// of checkFiles?
 	check.files = nil
+	check.strictFiles = nil
 	check.imports = nil
 	check.dotImportMap = nil
 
@@ -353,6 +360,13 @@ func (check *Checker) initFiles(files []*ast.File) {
 			}
 		}
 		versions[file] = v
+
+		if file.Strict {
+			if check.strictFiles == nil {
+				check.strictFiles = make(map[*token.File]bool)
+			}
+			check.strictFiles[check.fset.File(file.FileStart)] = true
+		}
 	}
 }
 
@@ -434,6 +448,9 @@ func (check *Checker) checkFiles(files []*ast.File) {
 			fmt.Println(msg)
 		}
 	}
+
+	print("== enum constructors ==")
+	check.enumDecls = enumConstructorDecls(files)
 
 	print("== initFiles ==")
 	check.initFiles(files)

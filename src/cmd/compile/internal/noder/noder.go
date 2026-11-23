@@ -56,6 +56,9 @@ func LoadPackage(filenames []string) {
 				defer f.Close()
 
 				p.file, _ = syntax.Parse(fbase, f, p.error, p.pragma, syntax.CheckBranches) // errors are tracked via p.error
+				if p.file != nil && base.Flag.Strict && !p.file.NoStrict {
+					p.file.Strict = true
+				}
 			}()
 		}
 	}()
@@ -72,6 +75,11 @@ func LoadPackage(filenames []string) {
 		lines += p.file.EOF.Line()
 	}
 	base.Timer.AddEvent(int64(lines), "lines")
+
+	// Auto-generate constructor functions and variant tag constants for enum
+	// type declarations before type checking, so they are ordinary package-level
+	// declarations (and therefore exported, imported, and type checked).
+	synthesizeEnumConstructors(noders)
 
 	unified(m, noders)
 }

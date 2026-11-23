@@ -453,6 +453,7 @@ func (check *Checker) varDecl(obj *Var, lhs []*Var, typ, init ast.Expr) {
 			// error reported before by arityMatch
 			obj.typ = Typ[Invalid]
 		}
+		check.strictPkgVarNoInit(obj)
 		return
 	}
 
@@ -771,6 +772,7 @@ func (check *Checker) funcDecl(obj *Func, decl *declInfo) {
 
 	fdecl := decl.fdecl
 	check.funcType(sig, fdecl.Recv, fdecl.Type)
+	check.strictNamedResults(fdecl.Type, sig.results)
 
 	// types2 handles go:nointerface pragma here by setting obj.nointerface.
 	// go/types currently doesn't handle pragmas.
@@ -878,6 +880,7 @@ func (check *Checker) declStmt(d ast.Decl) {
 				// see constant declarations
 				check.declare(check.scope, name, lhs0[i], scopePos)
 			}
+			check.flowDeclare(d.spec, lhs0)
 
 		case typeDecl:
 			obj := NewTypeName(d.spec.Name.Pos(), pkg, d.spec.Name.Name, nil)

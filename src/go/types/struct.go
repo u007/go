@@ -9,6 +9,7 @@ import (
 	"go/token"
 	. "internal/types/errors"
 	"strconv"
+	"strings"
 )
 
 // ----------------------------------------------------------------------------
@@ -16,8 +17,9 @@ import (
 
 // A Struct represents a struct type.
 type Struct struct {
-	fields []*Var   // fields != nil indicates the struct is set up (possibly with len(fields) == 0)
-	tags   []string // field tags; nil if there are no tags
+	fields   []*Var   // fields != nil indicates the struct is set up (possibly with len(fields) == 0)
+	tags     []string // field tags; nil if there are no tags
+	enumInfo *EnumInfo
 }
 
 // NewStruct returns a new struct with the given fields and corresponding field tags.
@@ -34,7 +36,7 @@ func NewStruct(fields []*Var, tags []string) *Struct {
 	if len(tags) > len(fields) {
 		panic("more tags than fields")
 	}
-	s := &Struct{fields: fields, tags: tags}
+	s := &Struct{fields: fields, tags: tags, enumInfo: enumInfoOfTag(fields, tags)}
 	s.markComplete()
 	return s
 }
@@ -113,6 +115,9 @@ func (check *Checker) structType(styp *Struct, e *ast.StructType) {
 	for _, f := range list.List {
 		typ = check.varType(f.Type)
 		tag = check.tag(f.Tag)
+		if strings.HasPrefix(tag, "go:enum:") {
+			check.error(f.Tag, BadDecl, "struct tag key go:enum is reserved for enum types")
+		}
 		if len(f.Names) > 0 {
 			// named fields
 			for _, name := range f.Names {

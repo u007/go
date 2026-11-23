@@ -111,6 +111,10 @@ type Config struct {
 	// the type checker permits.
 	GoVersion string
 
+	// Strict reports that every file of the unit is checked as if
+	// it carried a //go:strict directive.
+	Strict bool
+
 	// GoFiles are the names of the Go source files of the unit.
 	// They are parsed and type-checked, and are reported to each
 	// analyzer as Pass.Files. The list must not be empty.
@@ -386,6 +390,7 @@ func run(fset *token.FileSet, cfg *Config, analyzers []*analysis.Analyzer) ([]re
 		if err != nil {
 			return nil, err
 		}
+		f.Strict = f.Strict || cfg.Strict && !f.NoStrict
 		files = append(files, f)
 	}
 

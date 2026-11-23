@@ -1478,4 +1478,26 @@ const (
 	// errors. The solution is to rebuild the application with a
 	// newer Go release.
 	TooNew
+	// InvalidStrict occurs when code in a //go:strict file uses a construct
+	// that can produce a nil value of a non-nil pointer type.
+	//
+	// Example:
+	//  //go:strict
+	//  package p
+	//
+	//  var _ = new(*int)
+	InvalidStrict
+
+	// UnassignedVar occurs when code in a //go:strict file reads a variable
+	// of zero-unsafe type before it is definitely assigned.
+	//
+	// Example:
+	//  //go:strict
+	//  package p
+	//
+	//  func f() *int {
+	//  	var p *int
+	//  	return p
+	//  }
+	UnassignedVar
 )

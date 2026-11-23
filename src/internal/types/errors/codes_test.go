@@ -92,7 +92,7 @@ func readCode(err Error) int {
 func checkExample(t *testing.T, example string) error {
 	t.Helper()
 	fset := token.NewFileSet()
-	if !strings.HasPrefix(example, "package") {
+	if !strings.HasPrefix(example, "package") && !strings.HasPrefix(example, "//go:strict") {
 		example = "package p\n\n" + example
 	}
 	file, err := parser.ParseFile(fset, "example.go", example, parser.SkipObjectResolution)

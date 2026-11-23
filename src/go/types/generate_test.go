@@ -111,6 +111,7 @@ var filemap = map[string]action{
 		renameIdents(f, "syntax->ast", "poser->positioner", "nopos->noposn")
 	},
 	"array.go":          nil,
+	"strict_assign.go":  nil,
 	"api_predicates.go": nil,
 	"basic.go":          nil,
 	"builtins.go": func(f *ast.File) {

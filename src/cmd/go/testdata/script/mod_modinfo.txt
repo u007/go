@@ -35,11 +35,14 @@ import "runtime/debug"
 
 func init() {
 	m, ok := debug.ReadBuildInfo()
-	if !ok {
+	if !ok || m == nil { // modules are strict: ok does not prove m non-nil
 		panic("failed debug.ReadBuildInfo")
 	}
 	println("mod", m.Main.Path, m.Main.Version)
 	for _, d := range m.Deps {
+		if d == nil {
+			continue
+		}
 		println("dep", d.Path, d.Version, d.Sum)
 		if r := d.Replace; r != nil {
 			println("=>", r.Path, r.Version, r.Sum)

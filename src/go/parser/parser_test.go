@@ -996,3 +996,18 @@ const _ = ` + stringlit + ` ;
 		t.Errorf("found %d BasicLit, want 3", count)
 	}
 }
+
+func TestUnresolvedEnum(t *testing.T) {
+	f, err := ParseFile(token.NewFileSet(), "", "package p\ntype Tree[T any] enum { Leaf(T, missing); Empty }\n", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, id := range f.Unresolved {
+		got = append(got, id.Name)
+	}
+	// Variant names are declarations of the enum, not uses.
+	if want := "any missing"; strings.Join(got, " ") != want {
+		t.Errorf("unresolved = %q, want %q", got, want)
+	}
+}

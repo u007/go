@@ -307,6 +307,12 @@ type Info struct {
 	// Version strings begin with “go”, like “go1.21”, and
 	// are suitable for use with the [go/version] package.
 	FileVersions map[*syntax.PosBase]string
+
+	// LenBounded holds the slice expressions of strict files whose high
+	// bound must not exceed the length of the sliced operand, rather than
+	// its capacity. The elements between length and capacity may be zero
+	// values of a zero-unsafe element type.
+	LenBounded map[*syntax.SliceExpr]bool
 }
 
 func (info *Info) recordTypes() bool {
