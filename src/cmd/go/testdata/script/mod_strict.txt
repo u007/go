@@ -67,6 +67,9 @@ package lib
 type Node struct{ N int }
 
 func New(n int) *Node { return &Node{N: n} }
+
+// Pick is a strict generic function: its result keeps its type argument.
+func Pick[P any](a, b P) P { return a }
 -- lib/lib_test.go --
 package lib
 
@@ -86,7 +89,7 @@ func use(n *lib.Node) int { return n.N }
 
 func main() {
 	n := lib.New(3)
-	println(use(n), n.N)
+	println(use(n), n.N, use(lib.Pick(n, n)))
 }
 -- bad.go.txt --
 package main

@@ -689,9 +689,12 @@ func (p *iexporter) doDecl(obj types.Object) {
 		}
 
 		// Function.
-		if sig.TypeParams().Len() == 0 {
+		switch {
+		case sig.TypeParams().Len() == 0:
 			w.tag(funcTag)
-		} else {
+		case types.IsStrict(sig):
+			w.tag(strictFuncTag) // only packages with strict generic functions use this tag
+		default:
 			w.tag(genericFuncTag)
 		}
 		w.pos(obj.Pos())

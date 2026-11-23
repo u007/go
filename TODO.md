@@ -106,7 +106,28 @@ Implemented in `cmd/compile/internal/syntax` (directive) and
   built with an unpatched `x/tools` cannot read export data of a strict
   package.
 
+- Generic functions: a call in a strict file of a generic function that is
+  not strict treats a strict type argument as nullable in the results
+  (`strictInstanceResults`): such a function may return the zero value of a
+  type parameter, as `cmp.Or[*T]()` does. A named strict type argument there
+  is an error. Each function's declared strictness is exported as a trailing
+  bool of its object record (readers that do not know it stop before it), and
+  as tag `'S'` for strict generic functions in vet fact files.
+- Soundness tests: `types2/testdata/strict/soundness/` (a non-strict library
+  file whose functions return nil on rare paths: named and deferred results,
+  recover, recursion, package variables, function values, closures,
+  interfaces, method values, generics, error results, fields, collections,
+  aliasing, reassignment). Every unchecked use must stay an error.
+
 ### Known soundness gaps (not fixed)
+
+- **Non-strict code writes nil into strict data it receives.** Generic
+  standard library functions make this reachable: since Go 1.22,
+  `slices.Delete`, `Compact`, and `Replace` zero the tail of the caller's
+  backing array, so strict code that keeps the original slice reads nil from
+  a strict `[]*T` (confirmed: `s := []*T{a, b}; slices.Delete(s, 0, 1);
+  s[1].M()` crashes). A generic that writes the zero value through a `*P`
+  parameter does the same. Candidate for the planned library warnings.
 
 - **Non-strict code.** Non-strict files get no strict errors. They can pass
   `nil` to a strict function, write `nil` into a strict slice they receive, or

@@ -7,6 +7,7 @@ package types2
 import (
 	"cmd/compile/internal/syntax"
 	. "internal/types/errors"
+	"slices"
 )
 
 // inStrictFile reports whether pos lies in a file that was checked by check and
@@ -124,7 +125,9 @@ func strictForm(t Type, strict bool) Type {
 // file it has the strict form of its signature, whichever file declares it.
 func (check *Checker) strictFuncValue(pos syntax.Pos, t Type) Type {
 	sig, _ := Unalias(t).(*Signature)
-	if sig == nil || sig.strict || !check.inStrictFile(pos) {
+	// A generic signature keeps the strictness of its declaration, which its
+	// instances need (see strictInstanceResults).
+	if sig == nil || sig.strict || sig.TypeParams().Len() > 0 || !check.inStrictFile(pos) {
 		return t
 	}
 	s := *sig
@@ -223,4 +226,42 @@ func (check *Checker) strictAssertType(at poser, T Type) Type {
 	}
 	check.errorf(at, InvalidAssert, "strict: cannot assert named strict %s type %s: the interface may hold a nil %s", nilableKind(T), T, T)
 	return T
+}
+
+// strictInstanceResults returns inst, the instance of the generic signature
+// typ with targs, as a call in a strict file sees it. A generic function that is
+// not strict may return the zero value of a type parameter, so a strict
+// non-nil type argument is nullable in its results: the results are those of
+// the instance with the nullable forms of such arguments. A named strict type
+// has no nullable form, so it is an error as a type argument whose type
+// parameter a result mentions.
+func (check *Checker) strictInstanceResults(pos syntax.Pos, expr syntax.Expr, typ *Signature, targs []Type, inst *Signature) *Signature {
+	if typ.strict || !check.inStrictFile(pos) {
+		return inst
+	}
+	var loose []Type
+	for i, t := range targs {
+		if !check.isStrictNonNil(t) {
+			continue
+		}
+		tpar := typ.TypeParams().At(i)
+		if !isParameterized([]*TypeParam{tpar}, typ.results) {
+			continue
+		}
+		n := strictForm(t, false)
+		if n == nil {
+			check.errorf(expr, InvalidStrict, "strict: cannot instantiate %s with named strict type %s: the function is not strict and may return a nil %s", tpar, t, t)
+			return inst
+		}
+		if loose == nil {
+			loose = slices.Clone(targs)
+		}
+		loose[i] = n
+	}
+	res := *inst
+	res.strict = true // an instance names a declared function, which is never nil
+	if loose != nil {
+		res.results = check.instance(pos, typ, loose, nil, check.context()).(*Signature).results
+	}
+	return &res
 }

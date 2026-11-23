@@ -94,6 +94,7 @@ const (
 	varTag          = 'V'
 	funcTag         = 'F'
 	genericFuncTag  = 'G'
+	strictFuncTag   = 'S' // a generic function declared in a //go:strict file
 	constTag        = 'C'
 	aliasTag        = 'A'
 	genericAliasTag = 'B'
@@ -565,12 +566,15 @@ func (r *importReader) obj(pkg *types.Package, name string) {
 
 		r.declare(types.NewConst(pos, pkg, name, typ, val))
 
-	case funcTag, genericFuncTag:
+	case funcTag, genericFuncTag, strictFuncTag:
 		var tparams []*types.TypeParam
-		if tag == genericFuncTag {
+		if tag != funcTag {
 			tparams = r.tparamList()
 		}
 		sig := r.signature(pkg, nil, nil, tparams)
+		if tag == strictFuncTag {
+			types.MarkStrict(sig)
+		}
 		r.declare(types.NewFunc(pos, pkg, name, sig))
 
 	case typeTag, genericTypeTag:

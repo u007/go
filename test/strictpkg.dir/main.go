@@ -21,9 +21,11 @@ func main() {
 	var h a.Hook = func(*a.Node) {}
 	a.Walk(n, v, h)
 
-	var p *a.Node = nil   // ERROR "strict: cannot use nil as \*a.Node value"
-	var w a.Visitor = nil // ERROR "strict: cannot use nil as a.Visitor value"
-	a.Walk(nil, v, h)     // ERROR "strict: cannot use nil as \*a.Node value"
-	var g a.Hook          // ERROR "declared and not used"
+	var p *a.Node = nil         // ERROR "strict: cannot use nil as \*a.Node value"
+	var w a.Visitor = nil       // ERROR "strict: cannot use nil as a.Visitor value"
+	a.Walk(nil, v, h)           // ERROR "strict: cannot use nil as \*a.Node value"
+	_ = use(a.Pick(n, n, true)) // a strict generic: the result is non-nil
+	_ = use(a.Zero[*a.Node]())  // ERROR "strict: cannot use a.Zero\[\*a.Node\]\(\)"
+	var g a.Hook                // ERROR "declared and not used"
 	_, _ = p, w
 }

@@ -527,6 +527,10 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types.Package, string) {
 			}
 			tparams := r.typeParamNames(false)
 			sig := r.signature(nil, nil, tparams)
+			_ = r.pos() // declaration
+			if r.Bool() {
+				types.MarkStrict(sig)
+			}
 			declare(types.NewFunc(pos, objPkg, objName, sig))
 
 		case pkgbits.ObjType:

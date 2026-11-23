@@ -1,5 +1,5 @@
 diff --git a/golang.org/x/tools/go/analysis/unitchecker/unitchecker.go b/golang.org/x/tools/go/analysis/unitchecker/unitchecker.go
-index 5b1e3fb84c..6952944f64 100644
+index 5b1e3fb84c..91420a8201 100644
 --- a/golang.org/x/tools/go/analysis/unitchecker/unitchecker.go
 +++ b/golang.org/x/tools/go/analysis/unitchecker/unitchecker.go
 @@ -111,6 +111,10 @@ type Config struct {
@@ -17,15 +17,30 @@ index 5b1e3fb84c..6952944f64 100644
  		if err != nil {
  			return nil, err
  		}
-+		f.Strict = f.Strict || cfg.Strict
++		f.Strict = f.Strict || cfg.Strict && !f.NoStrict
  		files = append(files, f)
  	}
  
 diff --git a/golang.org/x/tools/internal/gcimporter/iexport.go b/golang.org/x/tools/internal/gcimporter/iexport.go
-index 9d7623b414..f068135cc1 100644
+index 9d7623b414..79ccdfa5e9 100644
 --- a/golang.org/x/tools/internal/gcimporter/iexport.go
 +++ b/golang.org/x/tools/internal/gcimporter/iexport.go
-@@ -978,6 +978,9 @@ func (w *exportWriter) doTyp(t types.Type, pkg *types.Package) {
+@@ -689,9 +689,12 @@ func (p *iexporter) doDecl(obj types.Object) {
+ 		}
+ 
+ 		// Function.
+-		if sig.TypeParams().Len() == 0 {
++		switch {
++		case sig.TypeParams().Len() == 0:
+ 			w.tag(funcTag)
+-		} else {
++		case types.IsStrict(sig):
++			w.tag(strictFuncTag) // only packages with strict generic functions use this tag
++		default:
+ 			w.tag(genericFuncTag)
+ 		}
+ 		w.pos(obj.Pos())
+@@ -978,6 +981,9 @@ func (w *exportWriter) doTyp(t types.Type, pkg *types.Package) {
  			w.p.trace("=> %s", t)
  		}()
  	}
@@ -36,7 +51,7 @@ index 9d7623b414..f068135cc1 100644
  	case *types.Alias:
  		if targs := t.TypeArgs(); targs.Len() > 0 {
 diff --git a/golang.org/x/tools/internal/gcimporter/iimport.go b/golang.org/x/tools/internal/gcimporter/iimport.go
-index df11568aee..033ca382a7 100644
+index df11568aee..b4cf325132 100644
 --- a/golang.org/x/tools/internal/gcimporter/iimport.go
 +++ b/golang.org/x/tools/internal/gcimporter/iimport.go
 @@ -86,6 +86,7 @@ const (
@@ -47,7 +62,33 @@ index df11568aee..033ca382a7 100644
  )
  
  // Object tags
-@@ -917,6 +918,10 @@ func (r *importReader) doType(base *types.Named) (res types.Type) {
+@@ -93,6 +94,7 @@ const (
+ 	varTag          = 'V'
+ 	funcTag         = 'F'
+ 	genericFuncTag  = 'G'
++	strictFuncTag   = 'S' // a generic function declared in a //go:strict file
+ 	constTag        = 'C'
+ 	aliasTag        = 'A'
+ 	genericAliasTag = 'B'
+@@ -564,12 +566,15 @@ func (r *importReader) obj(pkg *types.Package, name string) {
+ 
+ 		r.declare(types.NewConst(pos, pkg, name, typ, val))
+ 
+-	case funcTag, genericFuncTag:
++	case funcTag, genericFuncTag, strictFuncTag:
+ 		var tparams []*types.TypeParam
+-		if tag == genericFuncTag {
++		if tag != funcTag {
+ 			tparams = r.tparamList()
+ 		}
+ 		sig := r.signature(pkg, nil, nil, tparams)
++		if tag == strictFuncTag {
++			types.MarkStrict(sig)
++		}
+ 		r.declare(types.NewFunc(pos, pkg, name, sig))
+ 
+ 	case typeTag, genericTypeTag:
+@@ -917,6 +922,10 @@ func (r *importReader) doType(base *types.Named) (res types.Type) {
  		pkg, name := r.qualifiedIdent()
  		r.p.doDecl(pkg, name)
  		return pkg.Scope().Lookup(name).(*types.TypeName).Type()
@@ -85,7 +126,7 @@ index a8bfa875fe..c035bf5df2 100644
 -func (t anyType) Underlying() types.Type { return t }
 -func (t anyType) String() string         { return "any" }
 diff --git a/golang.org/x/tools/internal/gcimporter/ureader.go b/golang.org/x/tools/internal/gcimporter/ureader.go
-index 09e833ce53..2f3e05582f 100644
+index 09e833ce53..5ff8680912 100644
 --- a/golang.org/x/tools/internal/gcimporter/ureader.go
 +++ b/golang.org/x/tools/internal/gcimporter/ureader.go
 @@ -370,6 +370,10 @@ func (r *reader) doTyp() (res types.Type) {
@@ -99,6 +140,17 @@ index 09e833ce53..2f3e05582f 100644
  	case pkgbits.TypePointer:
  		return types.NewPointer(r.typ())
  	case pkgbits.TypeSignature:
+@@ -567,6 +571,10 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types.Package, string) {
+ 			}
+ 			tparams := r.typeParamNames(false)
+ 			sig := r.signature(nil, nil, tparams)
++			_ = r.pos() // declaration
++			if r.Bool() {
++				types.MarkStrict(sig)
++			}
+ 			declare(types.NewFunc(pos, objPkg, objName, sig))
+ 
+ 		case pkgbits.ObjType:
 diff --git a/golang.org/x/tools/internal/pkgbits/codes.go b/golang.org/x/tools/internal/pkgbits/codes.go
 index 21f44d9656..9cc4a083d1 100644
 --- a/golang.org/x/tools/internal/pkgbits/codes.go

@@ -897,6 +897,9 @@ func (w *writer) doObj(wext *writer, obj types2.Object) pkgbits.CodeObj {
 		w.typeParamNames(sig.TypeParams())
 		w.signature(sig)
 		w.pos(decl)
+		// Last, so that readers that do not know it stop before it: whether the
+		// function was declared in a //go:strict file (see types2.MarkStrict).
+		w.Bool(types2.IsStrict(sig))
 		wext.funcExt(obj)
 		return pkgbits.ObjFunc
 

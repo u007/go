@@ -17,3 +17,12 @@ func New(n int) *Node { return &Node{N: n} }
 func (n *Node) Self() *Node { return n }
 
 func Walk(n *Node, v Visitor, h Hook) { v.Visit(n); h(n) }
+
+// Pick is generic and strict: its body is checked, so its result keeps the
+// strictness of its type argument.
+func Pick[P any](a, b P, first bool) P {
+	if first {
+		return a
+	}
+	return b
+}
