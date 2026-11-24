@@ -11,7 +11,11 @@ package strict
 
 import (
 	"bufio"
+	"errors"
+	"flag"
+	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,7 +89,7 @@ func useReassign(name string) {
 		r = f
 		r.Read(nil)
 	}
-	r = io.MultiReader() // an interface result of a non-strict function
+	r = multi() // an interface result of a non-strict type
 	r /* ERROR "strict: r may be nil here" */ .Read(nil)
 	g := f
 	_ = *g /* ERROR "strict: g may be nil here" */
@@ -95,11 +99,15 @@ func useReassign(name string) {
 	}
 }
 
+// multi returns a nullable io.Reader. The checker does not use the function
+// facts of its own package, so the result is not proven non-nil.
+func multi() io.Reader { return io.MultiReader() }
+
 // A join keeps a proof only if every path has it.
 func useJoin(c bool) {
 	var r io.Reader = useImpl{}
 	if c {
-		r = io.MultiReader()
+		r = multi()
 	}
 	r /* ERROR "strict: r may be nil here" */ .Read(nil)
 }
@@ -123,10 +131,20 @@ func useTypeSwitch(x any) {
 	}
 }
 
-// Expressions other than variables are not tracked.
-func useUntracked() {
-	os.Stdout.Close()
-	strings.NewReader("").Len()
+// Expressions other than local variables are not tracked: a use that needs a
+// value is a warning (NilWarning), which does not fail the build.
+func useUntracked(rs []io.Reader, u url.URL) {
+	os /* ERROR "strict: warning: os.Stdout (variable of type *os.File) may be nil; assign it to a variable and check it != nil" */ .Stdout.Close()
+	flag /* ERROR "strict: warning: flag.Lookup(\"x\") (value of type *flag.Flag) may be nil" */ .Lookup("x").Name = ""
+	rs /* ERROR "strict: warning: rs[0] (variable of interface type io.Reader) may be nil" */ [0].Read(nil)
+	_ = u /* ERROR "strict: warning: u.User (variable of type *url.Userinfo) may be nil" */ .User.Username()
+	if user := u.User; user != nil {
+		_ = user.Username() // a checked variable: no warning
+	}
+	fmt.Println(os.Args) // a declared function and a non-pointer value: no warning
+	// A call result of interface type may be nil too, unless the facts of
+	// the function prove it is not.
+	_ = errors /* ERROR "strict: warning: errors.Unwrap(nil) (value of interface type error) may be nil" */ .Unwrap(nil).Error()
 }
 
 func useIndex(x any) {

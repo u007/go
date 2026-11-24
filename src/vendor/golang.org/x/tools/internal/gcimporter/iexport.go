@@ -709,6 +709,9 @@ func (p *iexporter) doDecl(obj types.Object) {
 			w.tparamList(obj.Name(), tparams, obj.Pkg())
 		}
 		w.signature(sig)
+		if w.p.version >= iexportVersionFuncFacts {
+			w.funcFacts(obj)
+		}
 
 	case *types.Const:
 		w.tag(constTag)
@@ -806,6 +809,9 @@ func (p *iexporter) doDecl(obj types.Object) {
 			}
 			w.param(sig.Recv())
 			w.signature(sig)
+			if w.p.version >= iexportVersionFuncFacts {
+				w.funcFacts(m)
+			}
 		}
 
 	default:
@@ -817,6 +823,17 @@ func (p *iexporter) doDecl(obj types.Object) {
 
 func (w *exportWriter) tag(tag byte) {
 	w.data.WriteByte(tag)
+}
+
+// funcFacts writes the facts of fn and the positions of its dereferences (see
+// types.FuncFacts and types.FuncDerefs).
+func (w *exportWriter) funcFacts(fn *types.Func) {
+	w.uint64(types.FuncFacts(fn))
+	derefs := types.FuncDerefs(fn)
+	w.uint64(uint64(len(derefs)))
+	for _, pos := range derefs {
+		w.pos(pos)
+	}
 }
 
 func (w *exportWriter) pos(pos token.Pos) {

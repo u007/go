@@ -162,6 +162,12 @@ func (check *Checker) recordUse(id *syntax.Name, obj Object) {
 	if m := check.Uses; m != nil {
 		m[id] = obj
 	}
+	if fn, _ := obj.(*Func); fn != nil {
+		if check.funcUses == nil {
+			check.funcUses = make(map[*syntax.Name]*Func)
+		}
+		check.funcUses[id] = fn
+	}
 }
 
 func (check *Checker) recordImplicit(node syntax.Node, obj Object) {

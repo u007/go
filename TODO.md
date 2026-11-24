@@ -119,6 +119,66 @@ Implemented in `cmd/compile/internal/syntax` (directive) and
   interfaces, method values, generics, error results, fields, collections,
   aliasing, reassignment). Every unchecked use must stay an error.
 
+- Library nil warnings (Phase 1 of the library-warning plan): in a strict
+  file, a use that needs a value (selector, dereference, index of a pointer to
+  an array, call of a function variable) of a nullable value that is not a
+  local variable — a field, a package variable, a map or slice element, or a
+  call result — reports `strict: warning: X may be nil; assign it to a
+  variable and check it != nil`. Code `NilWarning`: the checker passes it to
+  the Error handler but never returns it from Check and never stops on it.
+  The compiler prints it with `base.WarnfAt`; `cmd/go` replays it from the
+  build cache; vet prints it to stderr and exits 0. Tests: `use.go`
+  (`useUntracked`). A tool that treats every reported error as fatal (gopls
+  shows them as errors) sees warnings as errors.
+- Function facts (Phase 2): both checkers compute, for every function and
+  method declared with a body in every file (std and dependencies too), two
+  facts once all bodies are checked (`strict_facts.go`): *never returns* (no
+  return or defer statement, and the body ends in a terminating statement,
+  where a call that never returns terminates; least fixed point; seeds
+  `runtime.Goexit`, `syscall.Exit`) and *result i never nil* (every return
+  proves it: an address, a function literal, a concrete value boxed in an
+  interface, a strict or narrowed value, or a call of a function whose result
+  is never nil; greatest fixed point; none with a defer statement or a bare
+  return). Strict code uses the facts of imported functions: a call statement
+  that never returns ends the flow (`if p == nil { t.Fatal() }` narrows), and
+  a call whose result is never nil needs no check (`errors.New(x).Error()`).
+  Facts travel as a trailing `uint64` of each function record and after the
+  methods of each type record in the unified export data, and after each
+  signature in vet's own fact files (std `vendor` copy only, so the
+  `go list -export` format stays upstream). The build cache keys on export
+  data, so a fact change rebuilds dependents. Tests: `TestFuncFacts` (both
+  checkers), `test/strictfacts.go`.
+  - Gap: a package does not use its own facts (they are computed after its
+    bodies are checked), so a same-package helper that never returns does not
+    narrow, and a same-package constructor still warns.
+  - Gap: no facts for generic methods (their records are read before the
+    trailing data), for multi-value assignments (`p, err := f()` does not
+    narrow `p` even if result 0 is never nil), or for functions with any
+    defer statement.
+- Parameter facts (Phase 3): a third fact, *parameter i is dereferenced*: a
+  call panics if it is nil. The checker records the uses of a parameter that
+  panic on nil while checking a body (`factsDeref`, `factsArgs`), then reads
+  the top-level statements in order: the first statement that mentions the
+  parameter must surely evaluate such a use, or pass the parameter to a
+  dereferenced parameter (least fixed point). Any statement other than a
+  simple one ends the scan after its header. In a strict file, an argument
+  that may be nil for a dereferenced parameter of an imported function is a
+  warning naming the function, the parameter, and the position of the use
+  that panics (for a parameter passed on, the use in the callee). Facts
+  share the `uint64`: results 0–30, parameters 0–31; the positions follow
+  the facts in export data (`FuncDerefs`). Tests: `TestFuncFacts`,
+  `test/strictfacts.go` (`params`).
+  - Gap: must-dereference only. A dereference after an early return or inside
+    a branch (`if c { return }; p.N`) gives no fact, so no warning.
+  - Gap: vet's fact files keep lines but not columns (x/tools `iimport`
+    uses a line-only file set), so vet prints `print.go:298:1` where the
+    compiler prints `print.go:298:11`, and vet prints the absolute GOROOT
+    path where the compiler prints `$GOROOT`.
+  - Gap: no receiver facts, so a pointer-receiver method call on a parameter
+    (`p.M()`) does not dereference it, and a value-receiver method call is not
+    counted either. Slice and map parameters get no fact (nil is valid for
+    reads). Functions with any defer statement get none.
+
 ### Known soundness gaps (not fixed)
 
 - **Non-strict code writes nil into strict data it receives.** Generic

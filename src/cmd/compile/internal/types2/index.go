@@ -97,6 +97,7 @@ func (check *Checker) indexExpr(x *operand, e *syntax.IndexExpr) (isFuncInst boo
 	case *Pointer:
 		if typ, _ := typ.base.Underlying().(*Array); typ != nil {
 			check.strictUse(x)
+			check.factsDeref(x)
 			valid = true
 			length = typ.len
 			x.mode_ = variable
@@ -327,6 +328,7 @@ func (check *Checker) sliceExpr(x *operand, e *syntax.SliceExpr) {
 	case *Pointer:
 		if u, _ := u.base.Underlying().(*Array); u != nil {
 			check.strictUse(x)
+			check.factsDeref(x)
 			valid = true
 			length = u.len
 			x.typ_ = &Slice{elem: u.elem}

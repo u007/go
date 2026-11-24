@@ -168,9 +168,41 @@ A variable is proven non-nil when:
   narrowed variable, or it is a concrete value boxed in an interface, or
 - it is the variable of a type switch clause with one interface type.
 
-A result of a non-strict function is not proven. After `f, err := os.Open(p)`,
-a check of `err` alone does not prove `f`; write `if err != nil || f == nil`.
+A result of a non-strict function is not proven, unless the facts of the
+function prove it (see below). After `f, err := os.Open(p)`, a check of `err`
+alone does not prove `f`; write `if err != nil || f == nil`.
 
 Not checked: expressions other than variables, package-level variables, and
 functions that contain `goto`. Cost: one map lookup per use, in strict files
 only (`strictUse`, `flowProve` in `strict_flow.go`).
+
+## Function facts
+
+The checker computes three facts for every function and method declared with a
+body, in every file, after all bodies of the package are checked
+(`strict_facts.go`):
+- **Never returns**: the body has no return or defer statement and ends in a
+  terminating statement, where a call that never returns also terminates.
+  Seeds: `runtime.Goexit`, `syscall.Exit`.
+- **Result i is never nil**: the body has no defer statement and no bare
+  return, and every return statement returns an address, a function literal,
+  a concrete value boxed in an interface, a strict or narrowed value, or a
+  result of a function whose result is never nil.
+- **Parameter i is dereferenced** (a call panics if it is nil): the body has
+  no defer statement, and the first top-level statement that mentions the
+  parameter surely evaluates a use that panics on nil (`*p`, a field through
+  `p`, a method value of an interface `p`, an index of a pointer to an array,
+  a call of `p`), or passes it to a parameter that is dereferenced. The scan
+  stops at the header of the first statement other than a simple statement,
+  since the statement may check the parameter or leave the function. A
+  mention under `&`, in a function literal, or in the right operand of `&&`
+  or `||` decides nothing.
+
+Strict code uses the facts of imported functions only. A call statement that
+never returns ends the flow, so `if p == nil { t.Fatal() }` narrows `p`. A call
+whose result is never nil needs no check, so `errors.New(s).Error()` gives no
+warning. An argument that may be nil, or is `nil`, for a dereferenced
+parameter of an imported function is a warning (`NilWarning`) that names the
+function, the parameter, and the position of the use that panics; export data
+carries one position per dereferenced parameter. Facts travel in export data, so the build cache rebuilds dependents
+when they change. A missing fact means nothing is known.

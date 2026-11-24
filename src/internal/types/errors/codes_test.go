@@ -99,11 +99,22 @@ func checkExample(t *testing.T, example string) error {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A warning (NilWarning) reaches only the Error handler, so collect the
+	// first report there.
+	var first error
 	conf := Config{
 		FakeImportC: true,
 		Importer:    importer.Default(),
+		Error: func(err error) {
+			if first == nil {
+				first = err
+			}
+		},
 	}
 	_, err = conf.Check("example", fset, []*ast.File{file}, nil)
+	if err == nil {
+		err = first
+	}
 	return err
 }
 

@@ -455,7 +455,7 @@ func (check *Checker) stmtLabeled(ctxt stmtContext, s ast.Stmt, label string) {
 		// in statement context. Such statements may be parenthesized."
 		var x operand
 		kind := check.rawExpr(nil, &x, s.X, false)
-		check.flowPanicStmt(s.X)
+		check.callStmt(s.X)
 		var msg string
 		var code Code
 		switch x.mode() {
@@ -559,12 +559,14 @@ func (check *Checker) stmtLabeled(ctxt stmtContext, s ast.Stmt, label string) {
 		check.suspendedCall("go", s.Call)
 
 	case *ast.DeferStmt:
+		check.factsDefer()
 		check.suspendedCall("defer", s.Call)
 
 	case *ast.ReturnStmt:
 		res := check.sig.results
 		// Return with implicit results allowed for function with named results.
 		// (If one is named, all are named.)
+		check.factsReturn(len(s.Results) == 0)
 		if len(s.Results) == 0 && res.Len() > 0 && res.vars[0].name != "" {
 			// spec: "Implementation restriction: A compiler may disallow an empty expression
 			// list in a "return" statement if a different entity (constant, type, or variable)

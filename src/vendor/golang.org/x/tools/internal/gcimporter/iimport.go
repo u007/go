@@ -45,9 +45,10 @@ const (
 	iexportVersionGenerics       = 2
 	iexportVersionGenericMethods = 3
 	iexportVersionRationalFloats = 4 // allow float constants to be represented as multiprecision rationals
-	iexportVersion               = iexportVersionRationalFloats
+	iexportVersionFuncFacts      = 5 // function facts for //go:strict files (see types.FuncFacts); vet fact files only
+	iexportVersion               = iexportVersionFuncFacts
 
-	iexportVersionCurrent = 4
+	iexportVersionCurrent = 5
 )
 
 type ident struct {
@@ -173,11 +174,11 @@ func iimportCommon(fset *token.FileSet, getPackages GetPackagesFunc, data []byte
 
 	version = int64(r.uint64())
 	switch version {
-	case iexportVersionRationalFloats, iexportVersionGenericMethods, iexportVersionGo1_18, iexportVersionPosCol, iexportVersionGo1_11:
+	case iexportVersionFuncFacts, iexportVersionRationalFloats, iexportVersionGenericMethods, iexportVersionGo1_18, iexportVersionPosCol, iexportVersionGo1_11:
 		// known version
 	default:
 		// unknown version
-		if version > iexportVersionRationalFloats {
+		if version > iexportVersionFuncFacts {
 			errorf("unstable iexport format version %d, just rebuild compiler and std library", version)
 		} else {
 			errorf("unknown iexport format version %d", version)
@@ -575,7 +576,11 @@ func (r *importReader) obj(pkg *types.Package, name string) {
 		if tag == strictFuncTag {
 			types.MarkStrict(sig)
 		}
-		r.declare(types.NewFunc(pos, pkg, name, sig))
+		fn := types.NewFunc(pos, pkg, name, sig)
+		if r.p.version >= iexportVersionFuncFacts {
+			r.funcFacts(fn)
+		}
+		r.declare(fn)
 
 	case typeTag, genericTypeTag:
 		// Types can be recursive. We need to setup a stub
@@ -624,7 +629,11 @@ func (r *importReader) obj(pkg *types.Package, name string) {
 					}
 				}
 				msig := r.signature(pkg, recv, rparams, tpars)
-				named.AddMethod(types.NewFunc(mpos, pkg, mname, msig))
+				m := types.NewFunc(mpos, pkg, mname, msig)
+				if r.p.version >= iexportVersionFuncFacts {
+					r.funcFacts(m)
+				}
+				named.AddMethod(m)
 			}
 		}
 
@@ -839,6 +848,17 @@ func (r *importReader) qualifiedIdent() (*types.Package, string) {
 	name := r.string()
 	pkg := r.pkg()
 	return pkg, name
+}
+
+// funcFacts reads the facts of fn and the positions of its dereferences (see
+// types.FuncFacts and types.FuncDerefs).
+func (r *importReader) funcFacts(fn *types.Func) {
+	facts := r.uint64()
+	derefs := make([]token.Pos, r.uint64())
+	for i := range derefs {
+		derefs[i] = r.pos()
+	}
+	types.SetFuncFacts(fn, facts, derefs)
 }
 
 func (r *importReader) pos() token.Pos {

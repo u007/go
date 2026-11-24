@@ -80,11 +80,14 @@ import (
 	"sync"
 	"time"
 
+	typeserrors "internal/types/errors"
+
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/internal/analysisflags"
 	"golang.org/x/tools/internal/analysis/driverutil"
 	"golang.org/x/tools/internal/facts"
 	"golang.org/x/tools/internal/gcimporter"
+	"golang.org/x/tools/internal/typesinternal"
 )
 
 // A Config describes a compilation unit to be analyzed.
@@ -424,6 +427,15 @@ func run(fset *token.FileSet, cfg *Config, analyzers []*analysis.Analyzer) ([]re
 		Importer:  importer,
 		Sizes:     types.SizesFor("gc", build.Default.GOARCH),
 		GoVersion: cfg.GoVersion,
+		// Print warnings of //go:strict files without failing; Check still
+		// returns the first error, which ends the run as before.
+		Error: func(err error) {
+			if terr, ok := err.(types.Error); ok && !cfg.VetxOnly {
+				if code, _, _, ok := typesinternal.ErrorCodeStartEnd(terr); ok && int(code) == int(typeserrors.NilWarning) {
+					fmt.Fprintf(os.Stderr, "%s\n", terr)
+				}
+			}
+		},
 	}
 	info := &types.Info{
 		Types:        make(map[ast.Expr]types.TypeAndValue),

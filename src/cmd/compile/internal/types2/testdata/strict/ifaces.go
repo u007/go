@@ -51,16 +51,21 @@ var boxInt any = 5
 var boxStr any = "s"
 
 func boxNil() {
-	p := list.New().Front() // a nullable *list.Element
+	p := list /* ERROR "strict: warning: list.New() (value of type *list.List) may be nil" */ .New().Front() // a nullable *list.Element
 	var a any = p
 	f := flag.Usage // a nullable func
 	var b any = f
 	_, _ = a, b
 }
 
+// background returns a nullable interface of package context, which is not
+// strict. The checker does not use the function facts of its own package, so
+// the result is not proven non-nil.
+func background() context.Context { return context.Background() }
+
 // Nullable interface from package context, which is not strict.
 func nullable() {
-	ctx := context.Background()
+	ctx := background()
 	var c C = ctx /* ERROR "strict: cannot use ctx" */
 	_ = c
 	takeAny(ctx)
@@ -79,9 +84,9 @@ func nullable() {
 
 // A narrowing ends when the variable is assigned again.
 func narrowingKilled() {
-	ctx := context.Background()
+	ctx := background()
 	if ctx != nil {
-		ctx = context.Background()
+		ctx = background()
 		var c C = ctx /* ERROR "strict: cannot use ctx" */
 		_ = c
 	}

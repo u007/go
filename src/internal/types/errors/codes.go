@@ -1500,4 +1500,19 @@ const (
 	//  	return p
 	//  }
 	UnassignedVar
+
+	// NilWarning is a warning, not an error: code in a //go:strict file uses
+	// a value that a library may have left nil, such as a field, a package
+	// variable, or a call result, without a nil check. It does not stop the
+	// build; an Error handler receives it, and it never becomes the error that
+	// Check returns.
+	//
+	// Example:
+	//  //go:strict
+	//  package p
+	//
+	//  import "os"
+	//
+	//  func f() { os.Stdout.Close() }
+	NilWarning
 )

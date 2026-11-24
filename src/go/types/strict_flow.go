@@ -183,23 +183,6 @@ func (check *Checker) flowDead() {
 	}
 }
 
-// flowPanicStmt marks the current point unreachable if the expression statement
-// x is a call to the predeclared panic. check.isPanic is not used: it records
-// panic calls only in functions with results.
-func (check *Checker) flowPanicStmt(x ast.Expr) {
-	call, ok := ast.Unparen(x).(*ast.CallExpr)
-	if !ok {
-		return
-	}
-	name, ok := ast.Unparen(call.Fun).(*ast.Ident)
-	if !ok {
-		return
-	}
-	if b, _ := check.lookup(name.Name).(*Builtin); b != nil && b.id == _Panic {
-		check.flowDead()
-	}
-}
-
 // flowRef checks a use of the local variable v by the identifier e. A read of a
 // tracked variable that is not definitely assigned is an error. So is a write
 // through a closure that captures such a variable. A write to a local in its
@@ -290,25 +273,28 @@ func (check *Checker) flowProve(v *Var, x *operand) {
 	if check.flowProofs == nil {
 		check.flowProofs = make(map[*Var]bool)
 	}
-	check.flowProofs[v] = x.isValid() && !x.isNil() &&
-		(check.isStrictNonNil(x.typ()) || x.nonNull || v.typ != nil && boxes(x.typ(), v.typ))
+	check.flowProofs[v] = check.provenNonNil(x, v.typ)
 }
 
 // strictUse reports a use of x that needs a non-nil value (a dereference, a
-// selector, an index, or a call) if x is a local variable or parameter of
-// nullable type that is not proven non-nil here. Other expressions are not
-// tracked, so they are not reported. It reports whether it reported an error.
+// selector, an index, or a call) if x has a nullable type and is not proven
+// non-nil here. For a local variable or parameter it is an error. Any other
+// expression is not tracked, so it is a warning (NilWarning). It reports
+// whether it reported an error.
 func (check *Checker) strictUse(x *operand) bool {
 	s := check.flow
 	if s == nil || s.dead || s.noFlow || x.nonNull || !x.isValid() {
 		return false
 	}
-	v := check.flowVar(x.expr)
-	if v == nil || v.pkg != check.pkg || !isNilable(v.typ) || check.isStrictNonNil(v.typ) {
+	if !isNilable(x.typ()) || check.isStrictNonNil(x.typ()) {
 		return false
 	}
-	if p := v.Parent(); p == nil || p == v.pkg.Scope() {
-		return false // package-level: not tracked
+	v := check.flowVar(x.expr)
+	if v == nil || v.pkg != check.pkg || v.Parent() == nil || v.Parent() == v.pkg.Scope() {
+		// Not a tracked variable: a field, a package variable, or a call
+		// result. A library may have left it nil, so warn without failing.
+		check.errorf(x, NilWarning, "strict: warning: %s may be nil; assign it to a variable and check it != nil", x)
+		return false
 	}
 	check.errorf(x, InvalidStrict, "strict: %s may be nil here; check %s != nil first", v.name, v.name)
 	return true

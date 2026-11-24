@@ -403,6 +403,17 @@ func (w *writer) pos(p poser) {
 	w.Uint(pos.Col())
 }
 
+// funcFacts writes the facts of fn and the positions of its dereferences (see
+// types2.FuncFacts and types2.FuncDerefs).
+func (w *writer) funcFacts(fn *types2.Func) {
+	w.Uint64(types2.FuncFacts(fn))
+	derefs := types2.FuncDerefs(fn)
+	w.Len(len(derefs))
+	for _, pos := range derefs {
+		w.pos(pos)
+	}
+}
+
 // posBase writes a reference to the given PosBase into the element
 // bitstream.
 func (w *writer) posBase(b *syntax.PosBase) {
@@ -897,9 +908,11 @@ func (w *writer) doObj(wext *writer, obj types2.Object) pkgbits.CodeObj {
 		w.typeParamNames(sig.TypeParams())
 		w.signature(sig)
 		w.pos(decl)
-		// Last, so that readers that do not know it stop before it: whether the
-		// function was declared in a //go:strict file (see types2.MarkStrict).
+		// Last, so that readers that do not know them stop before them: whether
+		// the function was declared in a //go:strict file (see types2.MarkStrict),
+		// and its facts (see types2.FuncFacts).
 		w.Bool(types2.IsStrict(sig))
+		w.funcFacts(obj)
 		wext.funcExt(obj)
 		return pkgbits.ObjFunc
 
@@ -961,6 +974,11 @@ func (w *writer) doObj(wext *writer, obj types2.Object) pkgbits.CodeObj {
 			for _, m := range gmethods {
 				w.Reloc(pkgbits.SectionObj, w.p.objIdx(m))
 			}
+		}
+		// Last, so that readers that do not know them stop before them: the
+		// facts of the non-generic methods (see types2.FuncFacts).
+		for _, m := range methods {
+			w.funcFacts(m)
 		}
 
 		return pkgbits.ObjType

@@ -245,6 +245,7 @@ func (check *Checker) callExpr(x *operand, call *syntax.CallExpr) exprKind {
 		} else {
 			fdesc.builtin(check, x, call)
 		}
+		x.nonNull = false
 		x.expr = call
 		// a non-constant result implies a function call or receive
 		if x.isValid() && x.mode() != constant_ {
@@ -256,7 +257,10 @@ func (check *Checker) callExpr(x *operand, call *syntax.CallExpr) exprKind {
 	// ordinary function/method call
 	// signature may be generic
 	cgocall := x.mode() == cgofunc
-	check.strictUse(x)
+	if x.mode() == variable { // a method value or a function call result is never nil
+		check.strictUse(x)
+		check.factsDeref(x)
+	}
 
 	// If the operand type is a type parameter, all types in its type set
 	// must have a common underlying type, which must be a signature.
@@ -320,6 +324,10 @@ func (check *Checker) callExpr(x *operand, call *syntax.CallExpr) exprKind {
 	targetAt := func(i int) *target { return newTarget(sig.argType(i), "function parameter") }
 	args, atargs := check.genericExprList(targetAt, call.ArgList)
 	sig = check.arguments(call, sig, targs, xlist, args, atargs)
+	fn := check.callee(call)
+	if fn != nil {
+		check.factsArgs(call, fn, sig, args)
+	}
 
 	if wasGeneric && sig.TypeParams().Len() == 0 {
 		// update the recorded type of call.Fun to its instantiated type
@@ -350,6 +358,8 @@ func (check *Checker) callExpr(x *operand, call *syntax.CallExpr) exprKind {
 	}
 	x.expr = call
 	check.hasCallOrRecv = true
+	// A call of a function whose result is never nil has a non-nil value.
+	x.nonNull = sig.results.Len() == 1 && fn != nil && FuncFacts(fn)&factResult != 0
 
 	// if type inference failed, a parameterized result must be invalidated
 	// (operands cannot have a parameterized type)
@@ -888,6 +898,9 @@ func (check *Checker) selector(x *operand, e *syntax.SelectorExpr, wantType bool
 		// field value
 		check.recordSelection(e, FieldVal, x.typ(), obj, index, indirect)
 		T := x.typ()
+		if _, ok := T.Underlying().(*Pointer); ok {
+			check.factsDeref(x)
+		}
 		if x.mode() == variable || indirect {
 			x.mode_ = variable
 		} else {
@@ -956,6 +969,9 @@ func (check *Checker) selector(x *operand, e *syntax.SelectorExpr, wantType bool
 			// TODO(gri) If we needed to take into account the receiver's
 			// addressability, should we report the type &(x.typ) instead?
 			check.recordSelection(e, MethodVal, x.typ(), obj, index, indirect)
+			if IsInterface(x.typ()) && !isTypeParam(x.typ()) {
+				check.factsDeref(x) // a method value of a nil interface panics
+			}
 
 			x.mode_ = value
 

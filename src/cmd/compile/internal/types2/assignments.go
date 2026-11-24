@@ -417,6 +417,9 @@ func (check *Checker) initVars(lhs []*Var, orig_rhs []syntax.Expr, returnStmt sy
 				desc = "result variable"
 			}
 			check.expr(newTarget(lhs.typ, desc), &x, orig_rhs[i])
+			if returnStmt != nil {
+				check.factsResult(i, 0, &x, orig_rhs[i], lhs.typ)
+			}
 			check.initVar(lhs, &x, context)
 		}
 		return
@@ -447,6 +450,9 @@ func (check *Checker) initVars(lhs []*Var, orig_rhs []syntax.Expr, returnStmt sy
 	r = len(rhs)
 	if l == r {
 		for i, lhs := range lhs {
+			if returnStmt != nil {
+				check.factsResult(i, i, rhs[i], orig_rhs[0], lhs.typ)
+			}
 			check.initVar(lhs, rhs[i], context)
 		}
 		// Only record comma-ok expression if both initializations succeeded

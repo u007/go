@@ -142,6 +142,17 @@ func (r *reader) pos() syntax.Pos {
 	return syntax.MakePos(posBase, line, col)
 }
 
+// funcFacts reads the facts of fn and the positions of its dereferences (see
+// types2.FuncFacts and types2.FuncDerefs).
+func (r *reader) funcFacts(fn *types2.Func) {
+	facts := r.Uint64()
+	derefs := make([]syntax.Pos, r.Len())
+	for i := range derefs {
+		derefs[i] = r.pos()
+	}
+	types2.SetFuncFacts(fn, facts, derefs)
+}
+
 func (r *reader) posBase() *syntax.PosBase {
 	return r.p.posBaseIdx(r.Reloc(pkgbits.SectionPosBase))
 }
@@ -475,7 +486,9 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types2.Package, string) {
 			if r.Bool() {
 				types2.MarkStrict(sig)
 			}
-			return types2.NewFunc(pos, objPkg, objName, sig)
+			fn := types2.NewFunc(pos, objPkg, objName, sig)
+			r.funcFacts(fn)
+			return fn
 
 		case pkgbits.ObjType:
 			pos := r.pos()
@@ -503,7 +516,8 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types2.Package, string) {
 					// index along with each method.
 
 					// ordinary methods
-					for range r.Len() {
+					ordinary := r.Len()
+					for range ordinary {
 						idx, m := r.method(true)
 						methods = append(methods, indexedMethod{idx, m})
 					}
@@ -533,6 +547,12 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types2.Package, string) {
 						r.delayed = append(r.delayed, t.delayed...) // propagate before retiring
 						pr.retireReader(t)
 						methods = append(methods, indexedMethod{methodIdx, types2.NewFunc(pos, pkg, name, sig)})
+					}
+
+					// Last: the facts of the ordinary methods, which come first
+					// (see types2.FuncFacts).
+					for i := range ordinary {
+						r.funcFacts(methods[i].fn)
 					}
 
 					if r.Version().Has(pkgbits.PreserveMethodOrder) {

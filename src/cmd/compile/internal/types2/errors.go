@@ -196,6 +196,14 @@ func (check *Checker) handleError(index int, pos syntax.Pos, code Code, msg stri
 		Code: code,
 	}
 
+	if code == NilWarning {
+		// A warning neither fails the check nor stops it.
+		if f := check.conf.Error; f != nil {
+			f(e)
+		}
+		return
+	}
+
 	if check.firstErr == nil {
 		check.firstErr = e
 	}

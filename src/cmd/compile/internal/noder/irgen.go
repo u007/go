@@ -95,6 +95,10 @@ recheck:
 				msg = fmt.Sprintf("%s (-lang was set to %s; check go.mod)", msg, base.Flag.Lang)
 			}
 		}
+		if terr.Code == errors.NilWarning {
+			base.WarnfAt(m.makeXPos(terr.Pos), "%s", msg)
+			return
+		}
 		base.ErrorfAt(m.makeXPos(terr.Pos), terr.Code, "%s", msg)
 	}
 

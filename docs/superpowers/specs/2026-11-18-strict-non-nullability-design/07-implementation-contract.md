@@ -77,5 +77,6 @@ local variables and parameters; see part 03, "Use of a nullable variable".
 | Strict target check | `assignments.go`, `call.go`, `conversions.go`, `expr.go`, new `strict_assign.go` |
 | Zero-value bans, literal completeness, `recover` | `builtins.go`, `index.go`, `range.go`, `signature.go`, composite-literal code in `literals.go`, package-level part of `varDecl` in `decl.go`, new `strict_zero.go` |
 | Flow facts | `stmt.go`, `typexpr.go`, `declStmt` in `decl.go`, `funcLit` in `literals.go`, new `strict_flow.go` |
+| Function facts | `stmt.go`, `assignments.go` (return values), `recording.go` (`funcUses`), `return.go`, `call.go` (selectors, call arguments), `expr.go` and `index.go` (dereferences), new `strict_facts.go`; export: `noder/writer.go` and the importers |
 
 Each area has its own testdata file under `testdata/strict/`.

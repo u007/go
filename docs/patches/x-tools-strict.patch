@@ -1,8 +1,23 @@
 diff --git a/golang.org/x/tools/go/analysis/unitchecker/unitchecker.go b/golang.org/x/tools/go/analysis/unitchecker/unitchecker.go
-index 5b1e3fb84c..91420a8201 100644
+index 5b1e3fb84c..7bfb68c2b6 100644
 --- a/golang.org/x/tools/go/analysis/unitchecker/unitchecker.go
 +++ b/golang.org/x/tools/go/analysis/unitchecker/unitchecker.go
-@@ -111,6 +111,10 @@ type Config struct {
+@@ -80,11 +80,14 @@ import (
+ 	"sync"
+ 	"time"
+ 
++	typeserrors "internal/types/errors"
++
+ 	"golang.org/x/tools/go/analysis"
+ 	"golang.org/x/tools/go/analysis/internal/analysisflags"
+ 	"golang.org/x/tools/internal/analysis/driverutil"
+ 	"golang.org/x/tools/internal/facts"
+ 	"golang.org/x/tools/internal/gcimporter"
++	"golang.org/x/tools/internal/typesinternal"
+ )
+ 
+ // A Config describes a compilation unit to be analyzed.
+@@ -111,6 +114,10 @@ type Config struct {
  	// the type checker permits.
  	GoVersion string
  
@@ -13,7 +28,7 @@ index 5b1e3fb84c..91420a8201 100644
  	// GoFiles are the names of the Go source files of the unit.
  	// They are parsed and type-checked, and are reported to each
  	// analyzer as Pass.Files. The list must not be empty.
-@@ -386,6 +390,7 @@ func run(fset *token.FileSet, cfg *Config, analyzers []*analysis.Analyzer) ([]re
+@@ -386,6 +393,7 @@ func run(fset *token.FileSet, cfg *Config, analyzers []*analysis.Analyzer) ([]re
  		if err != nil {
  			return nil, err
  		}
@@ -21,8 +36,70 @@ index 5b1e3fb84c..91420a8201 100644
  		files = append(files, f)
  	}
  
+@@ -419,6 +427,15 @@ func run(fset *token.FileSet, cfg *Config, analyzers []*analysis.Analyzer) ([]re
+ 		Importer:  importer,
+ 		Sizes:     types.SizesFor("gc", build.Default.GOARCH),
+ 		GoVersion: cfg.GoVersion,
++		// Print warnings of //go:strict files without failing; Check still
++		// returns the first error, which ends the run as before.
++		Error: func(err error) {
++			if terr, ok := err.(types.Error); ok && !cfg.VetxOnly {
++				if code, _, _, ok := typesinternal.ErrorCodeStartEnd(terr); ok && int(code) == int(typeserrors.NilWarning) {
++					fmt.Fprintf(os.Stderr, "%s\n", terr)
++				}
++			}
++		},
+ 	}
+ 	info := &types.Info{
+ 		Types:        make(map[ast.Expr]types.TypeAndValue),
+diff --git a/golang.org/x/tools/go/ast/edge/edge.go b/golang.org/x/tools/go/ast/edge/edge.go
+index 8dc4dd1502..120c6801fa 100644
+--- a/golang.org/x/tools/go/ast/edge/edge.go
++++ b/golang.org/x/tools/go/ast/edge/edge.go
+@@ -166,6 +166,11 @@ const (
+ 	ValueSpec_Type
+ 	ValueSpec_Values
+ 
++	// Enum support (Go 1.28 tagged enums).
++	EnumType_Variants
++	EnumVariant_Name
++	EnumVariant_Payload
++
+ 	maxKind
+ )
+ 
+@@ -215,6 +220,9 @@ var fieldInfos = [...]fieldInfo{
+ 	Ellipsis_Elt:          info[*ast.Ellipsis]("Elt"),
+ 	ExprStmt_X:            info[*ast.ExprStmt]("X"),
+ 	FieldList_List:        info[*ast.FieldList]("List"),
++	EnumType_Variants:     info[*ast.EnumType]("Variants"),
++	EnumVariant_Name:      info[*ast.EnumVariant]("Name"),
++	EnumVariant_Payload:   info[*ast.EnumVariant]("Payload"),
+ 	Field_Comment:         info[*ast.Field]("Comment"),
+ 	Field_Doc:             info[*ast.Field]("Doc"),
+ 	Field_Names:           info[*ast.Field]("Names"),
+diff --git a/golang.org/x/tools/go/ast/inspector/walk.go b/golang.org/x/tools/go/ast/inspector/walk.go
+index 5f1c93c8a7..f211048776 100644
+--- a/golang.org/x/tools/go/ast/inspector/walk.go
++++ b/golang.org/x/tools/go/ast/inspector/walk.go
+@@ -134,6 +134,15 @@ func walk(v *visitor, ek edge.Kind, index int, node ast.Node) {
+ 	case *ast.StructType:
+ 		walk(v, edge.StructType_Fields, -1, n.Fields)
+ 
++	case *ast.EnumType:
++		walkList(v, edge.EnumType_Variants, n.Variants)
++
++	case *ast.EnumVariant:
++		walk(v, edge.EnumVariant_Name, -1, n.Name)
++		for i, x := range n.Payload {
++			walk(v, edge.EnumVariant_Payload, i, x)
++		}
++
+ 	case *ast.FuncType:
+ 		if n.TypeParams != nil {
+ 			walk(v, edge.FuncType_TypeParams, -1, n.TypeParams)
 diff --git a/golang.org/x/tools/internal/gcimporter/iexport.go b/golang.org/x/tools/internal/gcimporter/iexport.go
-index 9d7623b414..79ccdfa5e9 100644
+index 9d7623b414..7fa50e6634 100644
 --- a/golang.org/x/tools/internal/gcimporter/iexport.go
 +++ b/golang.org/x/tools/internal/gcimporter/iexport.go
 @@ -689,9 +689,12 @@ func (p *iexporter) doDecl(obj types.Object) {
@@ -40,7 +117,45 @@ index 9d7623b414..79ccdfa5e9 100644
  			w.tag(genericFuncTag)
  		}
  		w.pos(obj.Pos())
-@@ -978,6 +981,9 @@ func (w *exportWriter) doTyp(t types.Type, pkg *types.Package) {
+@@ -706,6 +709,9 @@ func (p *iexporter) doDecl(obj types.Object) {
+ 			w.tparamList(obj.Name(), tparams, obj.Pkg())
+ 		}
+ 		w.signature(sig)
++		if w.p.version >= iexportVersionFuncFacts {
++			w.funcFacts(obj)
++		}
+ 
+ 	case *types.Const:
+ 		w.tag(constTag)
+@@ -803,6 +809,9 @@ func (p *iexporter) doDecl(obj types.Object) {
+ 			}
+ 			w.param(sig.Recv())
+ 			w.signature(sig)
++			if w.p.version >= iexportVersionFuncFacts {
++				w.funcFacts(m)
++			}
+ 		}
+ 
+ 	default:
+@@ -816,6 +825,17 @@ func (w *exportWriter) tag(tag byte) {
+ 	w.data.WriteByte(tag)
+ }
+ 
++// funcFacts writes the facts of fn and the positions of its dereferences (see
++// types.FuncFacts and types.FuncDerefs).
++func (w *exportWriter) funcFacts(fn *types.Func) {
++	w.uint64(types.FuncFacts(fn))
++	derefs := types.FuncDerefs(fn)
++	w.uint64(uint64(len(derefs)))
++	for _, pos := range derefs {
++		w.pos(pos)
++	}
++}
++
+ func (w *exportWriter) pos(pos token.Pos) {
+ 	if w.p.shallow {
+ 		w.posV2(pos)
+@@ -978,6 +998,9 @@ func (w *exportWriter) doTyp(t types.Type, pkg *types.Package) {
  			w.p.trace("=> %s", t)
  		}()
  	}
@@ -51,10 +166,23 @@ index 9d7623b414..79ccdfa5e9 100644
  	case *types.Alias:
  		if targs := t.TypeArgs(); targs.Len() > 0 {
 diff --git a/golang.org/x/tools/internal/gcimporter/iimport.go b/golang.org/x/tools/internal/gcimporter/iimport.go
-index df11568aee..b4cf325132 100644
+index df11568aee..38d96d8ef7 100644
 --- a/golang.org/x/tools/internal/gcimporter/iimport.go
 +++ b/golang.org/x/tools/internal/gcimporter/iimport.go
-@@ -86,6 +86,7 @@ const (
+@@ -45,9 +45,10 @@ const (
+ 	iexportVersionGenerics       = 2
+ 	iexportVersionGenericMethods = 3
+ 	iexportVersionRationalFloats = 4 // allow float constants to be represented as multiprecision rationals
+-	iexportVersion               = iexportVersionRationalFloats
++	iexportVersionFuncFacts      = 5 // function facts for //go:strict files (see types.FuncFacts); vet fact files only
++	iexportVersion               = iexportVersionFuncFacts
+ 
+-	iexportVersionCurrent = 4
++	iexportVersionCurrent = 5
+ )
+ 
+ type ident struct {
+@@ -86,6 +87,7 @@ const (
  	instanceType
  	unionType
  	aliasType
@@ -62,7 +190,7 @@ index df11568aee..b4cf325132 100644
  )
  
  // Object tags
-@@ -93,6 +94,7 @@ const (
+@@ -93,6 +95,7 @@ const (
  	varTag          = 'V'
  	funcTag         = 'F'
  	genericFuncTag  = 'G'
@@ -70,7 +198,21 @@ index df11568aee..b4cf325132 100644
  	constTag        = 'C'
  	aliasTag        = 'A'
  	genericAliasTag = 'B'
-@@ -564,12 +566,15 @@ func (r *importReader) obj(pkg *types.Package, name string) {
+@@ -171,11 +174,11 @@ func iimportCommon(fset *token.FileSet, getPackages GetPackagesFunc, data []byte
+ 
+ 	version = int64(r.uint64())
+ 	switch version {
+-	case iexportVersionRationalFloats, iexportVersionGenericMethods, iexportVersionGo1_18, iexportVersionPosCol, iexportVersionGo1_11:
++	case iexportVersionFuncFacts, iexportVersionRationalFloats, iexportVersionGenericMethods, iexportVersionGo1_18, iexportVersionPosCol, iexportVersionGo1_11:
+ 		// known version
+ 	default:
+ 		// unknown version
+-		if version > iexportVersionRationalFloats {
++		if version > iexportVersionFuncFacts {
+ 			errorf("unstable iexport format version %d, just rebuild compiler and std library", version)
+ 		} else {
+ 			errorf("unknown iexport format version %d", version)
+@@ -564,13 +567,20 @@ func (r *importReader) obj(pkg *types.Package, name string) {
  
  		r.declare(types.NewConst(pos, pkg, name, typ, val))
  
@@ -82,13 +224,50 @@ index df11568aee..b4cf325132 100644
  			tparams = r.tparamList()
  		}
  		sig := r.signature(pkg, nil, nil, tparams)
+-		r.declare(types.NewFunc(pos, pkg, name, sig))
 +		if tag == strictFuncTag {
 +			types.MarkStrict(sig)
 +		}
- 		r.declare(types.NewFunc(pos, pkg, name, sig))
++		fn := types.NewFunc(pos, pkg, name, sig)
++		if r.p.version >= iexportVersionFuncFacts {
++			r.funcFacts(fn)
++		}
++		r.declare(fn)
  
  	case typeTag, genericTypeTag:
-@@ -917,6 +922,10 @@ func (r *importReader) doType(base *types.Named) (res types.Type) {
+ 		// Types can be recursive. We need to setup a stub
+@@ -619,7 +629,11 @@ func (r *importReader) obj(pkg *types.Package, name string) {
+ 					}
+ 				}
+ 				msig := r.signature(pkg, recv, rparams, tpars)
+-				named.AddMethod(types.NewFunc(mpos, pkg, mname, msig))
++				m := types.NewFunc(mpos, pkg, mname, msig)
++				if r.p.version >= iexportVersionFuncFacts {
++					r.funcFacts(m)
++				}
++				named.AddMethod(m)
+ 			}
+ 		}
+ 
+@@ -836,6 +850,17 @@ func (r *importReader) qualifiedIdent() (*types.Package, string) {
+ 	return pkg, name
+ }
+ 
++// funcFacts reads the facts of fn and the positions of its dereferences (see
++// types.FuncFacts and types.FuncDerefs).
++func (r *importReader) funcFacts(fn *types.Func) {
++	facts := r.uint64()
++	derefs := make([]token.Pos, r.uint64())
++	for i := range derefs {
++		derefs[i] = r.pos()
++	}
++	types.SetFuncFacts(fn, facts, derefs)
++}
++
+ func (r *importReader) pos() token.Pos {
+ 	if r.p.shallow {
+ 		// precise offsets are encoded only in shallow mode
+@@ -917,6 +942,10 @@ func (r *importReader) doType(base *types.Named) (res types.Type) {
  		pkg, name := r.qualifiedIdent()
  		r.p.doDecl(pkg, name)
  		return pkg.Scope().Lookup(name).(*types.TypeName).Type()
@@ -126,10 +305,28 @@ index a8bfa875fe..c035bf5df2 100644
 -func (t anyType) Underlying() types.Type { return t }
 -func (t anyType) String() string         { return "any" }
 diff --git a/golang.org/x/tools/internal/gcimporter/ureader.go b/golang.org/x/tools/internal/gcimporter/ureader.go
-index 09e833ce53..5ff8680912 100644
+index 09e833ce53..d291f16a82 100644
 --- a/golang.org/x/tools/internal/gcimporter/ureader.go
 +++ b/golang.org/x/tools/internal/gcimporter/ureader.go
-@@ -370,6 +370,10 @@ func (r *reader) doTyp() (res types.Type) {
+@@ -207,6 +207,17 @@ func (r *reader) pos() token.Pos {
+ 	return r.p.fake.pos(posBase, int(line), int(col))
+ }
+ 
++// funcFacts reads the facts of fn and the positions of its dereferences (see
++// types.FuncFacts and types.FuncDerefs).
++func (r *reader) funcFacts(fn *types.Func) {
++	facts := r.Uint64()
++	derefs := make([]token.Pos, r.Len())
++	for i := range derefs {
++		derefs[i] = r.pos()
++	}
++	types.SetFuncFacts(fn, facts, derefs)
++}
++
+ func (r *reader) posBase() string {
+ 	return r.p.posBaseIdx(r.Reloc(pkgbits.RelocPosBase))
+ }
+@@ -370,6 +381,10 @@ func (r *reader) doTyp() (res types.Type) {
  		return types.NewChan(dir, r.typ())
  	case pkgbits.TypeMap:
  		return types.NewMap(r.typ(), r.typ())
@@ -140,17 +337,44 @@ index 09e833ce53..5ff8680912 100644
  	case pkgbits.TypePointer:
  		return types.NewPointer(r.typ())
  	case pkgbits.TypeSignature:
-@@ -567,6 +571,10 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types.Package, string) {
+@@ -567,7 +582,13 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types.Package, string) {
  			}
  			tparams := r.typeParamNames(false)
  			sig := r.signature(nil, nil, tparams)
+-			declare(types.NewFunc(pos, objPkg, objName, sig))
 +			_ = r.pos() // declaration
 +			if r.Bool() {
 +				types.MarkStrict(sig)
 +			}
- 			declare(types.NewFunc(pos, objPkg, objName, sig))
++			fn := types.NewFunc(pos, objPkg, objName, sig)
++			r.funcFacts(fn)
++			declare(fn)
  
  		case pkgbits.ObjType:
+ 			pos := r.pos()
+@@ -644,7 +665,8 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types.Package, string) {
+ 				var methods []indexedMethod
+ 
+ 				// ordinary methods
+-				for range r.Len() {
++				ordinary := r.Len()
++				for range ordinary {
+ 					idx, m := r.method()
+ 					methods = append(methods, indexedMethod{idx, m})
+ 				}
+@@ -675,6 +697,12 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types.Package, string) {
+ 					methods = append(methods, indexedMethod{methodIdx, types.NewFunc(pos, pkg, name, sig)})
+ 				}
+ 
++				// Last: the facts of the ordinary methods, which come first
++				// (see types.FuncFacts).
++				for i := range ordinary {
++					r.funcFacts(methods[i].fn)
++				}
++
+ 				if r.Version().Has(pkgbits.PreserveMethodOrder) {
+ 					sort.Slice(methods, func(i, j int) bool {
+ 						return methods[i].index < methods[j].index
 diff --git a/golang.org/x/tools/internal/pkgbits/codes.go b/golang.org/x/tools/internal/pkgbits/codes.go
 index 21f44d9656..9cc4a083d1 100644
 --- a/golang.org/x/tools/internal/pkgbits/codes.go

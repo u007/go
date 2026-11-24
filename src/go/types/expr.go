@@ -1014,9 +1014,12 @@ func (check *Checker) rawExpr(T *target, x *operand, e ast.Expr, allowGeneric bo
 
 	kind := check.exprInternal(T, x, e)
 
-	// nonNull is only set for an identifier (Rule 2). Any other expression
-	// yields a new value, so it must not carry a non-nil proof from its operands.
-	if _, ok := ast.Unparen(e).(*ast.Ident); !ok {
+	// nonNull is only set for an identifier (Rule 2) and a call (see callExpr).
+	// Any other expression yields a new value, so it must not carry a non-nil
+	// proof from its operands.
+	switch ast.Unparen(e).(type) {
+	case *ast.Ident, *ast.CallExpr:
+	default:
 		x.nonNull = false
 	}
 
@@ -1171,6 +1174,7 @@ func (check *Checker) exprInternal(T *target, x *operand, e ast.Expr) exprKind {
 			x.typ_ = check.newPointerAt(e.Pos(), x.typ())
 		default:
 			check.strictUse(x)
+			check.factsDeref(x)
 			var base Type
 			if !underIs(x.typ(), func(u Type) bool {
 				p, _ := u.(*Pointer)

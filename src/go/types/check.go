@@ -148,6 +148,10 @@ type Checker struct {
 	strictFiles    map[*token.File]bool      // files with a //go:strict directive; see inStrictFile
 	flowProofs     map[*Var]bool             // whether the value last assigned to a variable is proven non-nil; see flowProve
 	flow           *flowState                // flow facts of the current function body; nil if not tracked; see strict_flow.go
+	bodies         map[*Signature]*bodyFacts // facts recorded for the bodies of declared functions, by signature; see strict_facts.go
+	funcUses       map[*ast.Ident]*Func      // identifiers that denote a function or method; see callee
+	stmtCalls      map[*ast.CallExpr]*Func   // call statements in declared function bodies and their callees, nil for panic; see callStmt
+	noReturnCalls  map[*ast.CallExpr]bool    // call statements that never return; set by computeFacts, after all bodies are checked
 	enumDecls      map[*ast.File][]ast.Decl  // enum constructors and tag constants per file, declared with the file's declarations; see enumConstructorDecls
 	enumExhaustive map[*ast.SwitchStmt]bool  // enum switches that list every variant and so need no default clause
 	strictLHS      ast.Expr                  // the assignment target being evaluated by lhsVar; a map index equal to it is a write, not a read
@@ -469,6 +473,9 @@ func (check *Checker) checkFiles(files []*ast.File) {
 
 	print("== processDelayed ==")
 	check.processDelayed(0) // incl. all functions
+
+	print("== computeFacts ==")
+	check.computeFacts()
 
 	print("== cleanup ==")
 	check.cleanup()

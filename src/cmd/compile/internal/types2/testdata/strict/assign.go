@@ -119,5 +119,5 @@ func accepted() {
 	var n64 int64
 	atomic.AddInt64(&n64, 1)
 
-	_ = nf.Name()
+	_ = nf /* ERROR "strict: warning: nf (variable of type *os.File) may be nil" */ .Name()
 }

@@ -26,8 +26,9 @@ func (check *Checker) isTerminating(s syntax.Stmt, label string) bool {
 		return check.isTerminating(s.Stmt, s.Label.Value)
 
 	case *syntax.ExprStmt:
-		// calling the predeclared (possibly parenthesized) panic() function is terminating
-		if call, ok := syntax.Unparen(s.X).(*syntax.CallExpr); ok && check.isPanic[call] {
+		// calling the predeclared (possibly parenthesized) panic() function is terminating;
+		// so is a call that never returns, once computeFacts knows it
+		if call, ok := syntax.Unparen(s.X).(*syntax.CallExpr); ok && (check.isPanic[call] || check.noReturnCalls[call]) {
 			return true
 		}
 
