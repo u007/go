@@ -1,0 +1,6 @@
+{
+  "extra_allowed_paths": [
+    "/Users/james/sdk/go1.27.4/bin",
+    "/Users/james/.bun-143/node_modules/bun"
+  ]
+}
