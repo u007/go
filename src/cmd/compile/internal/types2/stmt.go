@@ -534,9 +534,11 @@ func (check *Checker) stmtLabeled(ctxt stmtContext, s syntax.Stmt, label string)
 		kind := "go"
 		if s.Tok == syntax.Defer {
 			kind = "defer"
-			check.factsDefer()
 		}
 		check.suspendedCall(kind, s.Call)
+		if s.Tok == syntax.Defer {
+			check.factsDefer(s.Call)
+		}
 
 	case *syntax.ReturnStmt:
 		res := check.sig.results
@@ -842,6 +844,7 @@ func (check *Checker) switchStmt(inner stmtContext, s *syntax.SwitchStmt, label 
 		if fall != nil {
 			// Entered by case or by fallthrough: only what both paths establish holds.
 			check.flow = joinFlow(check.flow, fall)
+			fork.start = check.flow.clone() // a break leaves with this state
 		}
 		check.openScope(clause, "case")
 		check.stmtList(inner, clause.Body)
@@ -929,6 +932,7 @@ func (check *Checker) typeSwitchStmt(inner stmtContext, s *syntax.SwitchStmt, gu
 				T = check.strictAssertType(lhs, T)
 			}
 			obj := newVar(LocalVar, lhs.Pos(), check.pkg, lhs.Value, T)
+			check.fnVar(obj).loud = true // its value is not a binding that factsBind sees
 			check.declare(check.scope, nil, obj, clause.Colon)
 			if iface {
 				check.flowSetNonNil(obj) // a nil interface matches no interface case

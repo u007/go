@@ -99,9 +99,8 @@ func useReassign(name string) {
 	}
 }
 
-// multi returns a nullable io.Reader. The checker does not use the function
-// facts of its own package, so the result is not proven non-nil.
-func multi() io.Reader { return io.MultiReader() }
+// multi returns a nullable io.Reader that may be nil.
+func multi() io.Reader { return nil }
 
 // A join keeps a proof only if every path has it.
 func useJoin(c bool) {

@@ -88,6 +88,7 @@ func joinFlow(a, b *flowState) *flowState {
 type flowFork struct {
 	entry  *flowState
 	joined *flowState
+	start  *flowState // the state at the start of the current branch
 }
 
 // flowForkBegin starts a fork at the current point. Each branch is checked
@@ -108,12 +109,13 @@ func (check *Checker) flowForkBegin() *flowFork {
 func (check *Checker) flowBranchBegin(f *flowFork) {
 	if f != nil {
 		check.flow = f.entry.clone()
+		f.start = f.entry
 	}
 }
 
 // flowBranchEnd adds the current state, the exit of the branch, to the join.
 // A branch that leaves the enclosing switch or select by break contributes the
-// entry state instead, so the facts it assigned do not count after the statement.
+// state at its start instead, so the facts it assigned do not count after the statement.
 // The break may follow an assignment, so that state loses the narrowing of every
 // name that clause, the branch, assigns.
 // An absent branch (an if without else, or a switch without default) is a
@@ -124,7 +126,7 @@ func (check *Checker) flowBranchEnd(f *flowFork, clause syntax.Node, leavesByBre
 	}
 	out := check.flow
 	if leavesByBreak {
-		out = f.entry.clone()
+		out = f.start.clone()
 		out.dropAssigned(clause)
 	}
 	f.joined = joinFlow(f.joined, out)
@@ -372,7 +374,35 @@ func (check *Checker) flowNarrowable(s *flowState, v *Var) bool {
 	if p := v.Parent(); p == nil || p == v.pkg.Scope() {
 		return false // package-level: another function can assign it
 	}
-	return isNilable(v.typ) && !check.isStrictNonNil(v.typ)
+	return isNilable(v.typ) && !check.isStrictNonNil(v.typ) && !ptrMethods(v.typ)
+}
+
+// ptrMethods reports whether the type t has a method with a pointer receiver.
+// A call v.m() of one takes the address of the variable v, without &, and the
+// method may assign nil through it.
+func ptrMethods(t Type) bool {
+	if n, _ := Unalias(t).(*Named); n != nil {
+		for i := range n.NumMethods() {
+			if isPointer(n.Method(i).Signature().recv.typ) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// flowRight checks rhs, the right operand of a binary operation with the left
+// operand lhs. The right operand of && is evaluated only if lhs is true (and),
+// and that of || only if lhs is false (or), so it is checked with the narrowing
+// that lhs gives.
+func (check *Checker) flowRight(y *operand, lhs, rhs syntax.Expr, and, or bool) {
+	saved := check.flow
+	if saved != nil && (and || or) {
+		check.flow = saved.clone()
+		check.flowRefine(lhs, and)
+	}
+	check.expr(nil, y, rhs)
+	check.flow = saved
 }
 
 // narrowingExclusions returns the variables that flowNarrowable must refuse in a

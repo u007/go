@@ -133,13 +133,14 @@ Implemented in `cmd/compile/internal/syntax` (directive) and
 - Function facts (Phase 2): both checkers compute, for every function and
   method declared with a body in every file (std and dependencies too), two
   facts once all bodies are checked (`strict_facts.go`): *never returns* (no
-  return or defer statement, and the body ends in a terminating statement,
+  return statement or deferred call that may recover, and the body ends in a terminating statement,
   where a call that never returns terminates; least fixed point; seeds
   `runtime.Goexit`, `syscall.Exit`) and *result i never nil* (every return
   proves it: an address, a function literal, a concrete value boxed in an
   interface, a strict or narrowed value, or a call of a function whose result
-  is never nil; greatest fixed point; none with a defer statement or a bare
-  return). Strict code uses the facts of imported functions: a call statement
+  is never nil; greatest fixed point; none with a deferred call that may
+  recover, with a defer statement and named results, or with a bare
+  return). Strict code uses the facts of called functions: a call statement
   that never returns ends the flow (`if p == nil { t.Fatal() }` narrows), and
   a call whose result is never nil needs no check (`errors.New(x).Error()`).
   Facts travel as a trailing `uint64` of each function record and after the
@@ -148,46 +149,131 @@ Implemented in `cmd/compile/internal/syntax` (directive) and
   `go list -export` format stays upstream). The build cache keys on export
   data, so a fact change rebuilds dependents. Tests: `TestFuncFacts` (both
   checkers), `test/strictfacts.go`.
-  - Gap: a package does not use its own facts (they are computed after its
-    bodies are checked), so a same-package helper that never returns does not
-    narrow, and a same-package constructor still warns.
-  - Gap: no facts for generic methods (their records are read before the
-    trailing data), for multi-value assignments (`p, err := f()` does not
-    narrow `p` even if result 0 is never nil), or for functions with any
-    defer statement.
+  - Same-package facts: each body's facts are set once it is checked, with
+    the facts known so far (`bodyChecked`), and a body in a strict file first
+    checks the bodies it may call, found by name (`checkBody`), so a helper
+    declared below its caller narrows and a constructor needs no check.
+    `computeFacts` completes the facts for the export data. Non-strict files
+    keep the usual body order. Tests: `testdata/strict/samepkg`.
+  - Chains and cycles: the bodies that a strict body may call are checked
+    first, and so on for those bodies, whatever their files (`checkBody`,
+    deep). When the body that a cycle of calls came back to is checked, the
+    facts of the cycle are completed (`fixFacts`), so later callers see them.
+  - Gap: inside a cycle of calls (mutual recursion), a strict body checked
+    before the body it calls back does not know that body's facts, and may
+    get a warning that the final facts do not justify.
+  - Gap: callees are found by name only. A call through a method value, a
+    function variable, or an interface method finds none, and a selector
+    `x.m` orders every method named `m` first (which only costs precision).
+  - A result of a call with several results is proven too: after
+    `p, err := f()`, `p` needs no check if result 0 of `f` is never nil.
+  - Defer (fact *never calls recover*, bit 63, so parameter facts cover
+    parameters 0–30): a defer statement keeps the facts unless a deferred
+    call may call recover directly: a function literal that mentions
+    `recover`, `recover` itself, a function or method without the fact, or a
+    function value. `defer mu.Unlock()` and `defer f.Close()` keep them.
+    With any defer statement, named results get no never-nil fact, since a
+    deferred call may change them. A defer statement that mentions a
+    parameter decides it without a use, and does not end the scan.
+  - A call of `new` is proven non-nil, like an address.
+  - Deferred function values (fact *result i is a function that never calls
+    recover*, bits 16–30): `defer cancel()` keeps the facts if `cancel` is a
+    local variable with exactly one bound value, its address is not taken,
+    and the value is a function literal without `recover`, a declared
+    function or method with the never-calls-recover fact, or a result of a
+    call with the new fact (`context.WithCancel`, `WithTimeout`).
+    (`quietFn`, `factsBind`, `fnVar`.) A returned local variable
+    (`return cancel`) gives the function-result fact under the same rule
+    (`quietVar`). A parameter, a named result and a type switch variable are
+    never such a variable: their values are not all bindings in the body.
+  - A deferred interface method (`defer resp.Body.Close()`) is assumed not to
+    call recover directly (`ifaceMethod`): its implementations are not known.
+    Strict code cannot break the assumption (`strict: recover is not
+    allowed`); a non-strict method whose body calls `recover` itself can, and
+    then a fact may hide a nil warning. Decided by the user on 2026-11-26.
+    Narrowed after review on 2026-11-27: the never-returns fact does not use
+    the assumption (`deferIface`), since it would leave strict code after
+    the call unchecked, and a method value (`f := x.Close; defer f()`) is no
+    longer assumed quiet.
+  - Review fixes of 2026-11-27 (tests: `narrow5.go`, `samepkg`,
+    `TestFuncFacts`): a break in a clause entered by fallthrough keeps the
+    fallen-through state; the right operand of `&&` and `||` is checked with
+    the left operand's narrowing (`flowRight`); a pointer boxed in an
+    interface parameter, a value parameter with a pointer-receiver method
+    call, and an unevaluated operand (constant `len`/`cap`, `unsafe`
+    functions, range over an array without an element variable) give no
+    dereference fact.
+  - Gap: a variable whose type has a pointer-receiver method (a named func
+    type such as `type H func()` with `func (h *H) Clear()`) is never
+    narrowed (`ptrMethods`), because `h.Clear()` takes its address without
+    `&`. Strict code cannot call or select through such a nullable variable.
+  - Gap: the `unsafe.Sizeof` case of the unevaluated-operand fix has no unit
+    test (the test harness has no importer for `unsafe`).
+  - Gap: a deferred parameter, field, or package variable of function type
+    counts as may recover, so it still drops the facts.
+  - A deferred function of the same package whose body is checked later:
+    `computeFacts` runs the parameter scan again once its fact is known
+    (`scanParams`).
+  - Generic methods (methods with their own type parameters): the importers
+    read the rest of their records, so their facts and their strict mark
+    reach strict callers. Tests: `test/strictfacts.go` (`genericMethods`).
 - Parameter facts (Phase 3): a third fact, *parameter i is dereferenced*: a
   call panics if it is nil. The checker records the uses of a parameter that
   panic on nil while checking a body (`factsDeref`, `factsArgs`), then reads
   the top-level statements in order: the first statement that mentions the
   parameter must surely evaluate such a use, or pass the parameter to a
-  dereferenced parameter (least fixed point). Any statement other than a
-  simple one ends the scan after its header. In a strict file, an argument
-  that may be nil for a dereferenced parameter of an imported function is a
+  dereferenced parameter (least fixed point). In a statement other than a
+  simple one only the header is surely evaluated, and the scan ends after a
+  statement that has a return or goto statement. In a strict file, an argument
+  that may be nil for a dereferenced parameter is a
   warning naming the function, the parameter, and the position of the use
   that panics (for a parameter passed on, the use in the callee). Facts
-  share the `uint64`: results 0–30, parameters 0–31; the positions follow
+  share the `uint64`: results 0–14 (never nil at bits 1–15, function that
+  never recovers at bits 16–30), parameters 0–30 (bits 31–61), the receiver (bit 62), never calls recover (bit 63); the
+  positions follow
   the facts in export data (`FuncDerefs`). Tests: `TestFuncFacts`,
   `test/strictfacts.go` (`params`).
+  - The fact means that a call does not return normally if the argument is
+    nil: after `if debug { log() }` or a loop without a return, a
+    dereference still counts, though the call may stop earlier (panic, exit)
+    than at the reported position.
+  - Receiver facts: a method that dereferences its pointer receiver has the
+    fact for the receiver, so `p.M()` dereferences the parameter `p` if `M`
+    does. A method value that loads `*p` (a value receiver, or a method
+    promoted through an embedded field) dereferences `p` itself. `&T{p.f}`
+    and `&p.f` are uses; only `&p` takes the address of `p`.
   - Gap: must-dereference only. A dereference after an early return or inside
     a branch (`if c { return }; p.N`) gives no fact, so no warning.
   - Gap: vet's fact files keep lines but not columns (x/tools `iimport`
     uses a line-only file set), so vet prints `print.go:298:1` where the
     compiler prints `print.go:298:11`, and vet prints the absolute GOROOT
     path where the compiler prints `$GOROOT`.
-  - Gap: no receiver facts, so a pointer-receiver method call on a parameter
-    (`p.M()`) does not dereference it, and a value-receiver method call is not
-    counted either. Slice and map parameters get no fact (nil is valid for
-    reads). Functions with any defer statement get none.
+  - Gap: a nil receiver argument gives no warning of its own (strict code
+    must prove `p` before `p.M()` anyway). Slice and map parameters get no
+    fact (nil is valid for reads).
 
 ### Known soundness gaps (not fixed)
 
-- **Non-strict code writes nil into strict data it receives.** Generic
-  standard library functions make this reachable: since Go 1.22,
-  `slices.Delete`, `Compact`, and `Replace` zero the tail of the caller's
-  backing array, so strict code that keeps the original slice reads nil from
-  a strict `[]*T` (confirmed: `s := []*T{a, b}; slices.Delete(s, 0, 1);
-  s[1].M()` crashes). A generic that writes the zero value through a `*P`
-  parameter does the same. Candidate for the planned library warnings.
+- **Non-strict code writes nil into strict data it receives.** Partly
+  closed (2026-11-27) by the fact "parameter i may be zeroed": a body that
+  calls `clear` on a slice parameter, or a slice of it, or passes one to such
+  a parameter, has it, and export data carries it. A strict caller gets a
+  warning when the elements must not be nil, unless the argument is a call or
+  composite literal, or gets the result (`s = slices.Delete(s, 0, 1)`,
+  `x.s = f(x.s)`). `slices.Delete`, `DeleteFunc`, `Compact`, `CompactFunc`
+  and `Replace` have the fact.
+  - Gap: only `clear` sets the fact. `s[i] = nil`, `s[i] = *new(E)`, a write
+    of a zero value through a `*P` parameter, and a slice receiver do not.
+  - Gap: `s = f(s)` is accepted although `f` may zero elements that its
+    result keeps (`func f(s S) S { clear(s); return s }`).
+  - Gap: a parameter that the body assigns a new slice before `clear` still
+    gets the fact, so a warning may be wrong.
+  - To make room in the 64-bit fact word, facts now describe 10 results and
+    20 parameters (were 15 and 31).
+  - Gap (found here, older): the standard `go/importer` ("gc") reads the
+    indexed export format, which carries no facts, so a go/types client other
+    than vet sees no facts of imported functions. Vet uses its own fact files
+    and is tested end to end (`strict_facts_chain.txt`).
 
 - **Non-strict code.** Non-strict files get no strict errors. They can pass
   `nil` to a strict function, write `nil` into a strict slice they receive, or
@@ -196,17 +282,13 @@ Implemented in `cmd/compile/internal/syntax` (directive) and
 
 ### Deferred
 
-- API check: `go test cmd/api -run TestCheck` fails on 22 new exported names:
-  `go/ast` `EnumType`, `EnumVariant` (fields and methods), `File.Strict`; and
-  `go/types` `EnumInfo`, `EnumVariantInfo`, `Struct.EnumInfo`,
-  `Struct.SetEnumInfo`, `IsStrict`, `MarkStrict`; and `go/ast`
-  `File.NoStrict`. To close it:
-  1. Open an issue on our own repository for the new API (one issue, or one
-     for enums and one for `//go:strict`). No accepted upstream proposal exists.
-  2. Add `api/next/<issue>.txt` with the 22 lines the test prints, each ending
-     in `#<issue>`.
-  3. If the work goes upstream, rename the file to the real proposal number.
-  The check does not look the number up; it only matches file name and suffix.
+- API check: **DONE.** `api/next/90001.txt` lists the new exported names
+  (`go/ast` `EnumType`/`EnumVariant`/`File.Strict`/`File.NoStrict`; `go/types`
+  `EnumInfo`/`EnumVariantInfo`/`Struct.EnumInfo`/`Struct.SetEnumInfo`/
+  `IsStrict`/`MarkStrict`/`FuncFacts`/`SetFuncFacts`/`FuncDerefs`), so
+  `go test cmd/api -run TestCheck` passes. `90001` is a placeholder approval
+  number (no real proposal exists yet); rename the file and its `#NNNNN`
+  suffix if an issue/proposal number is assigned.
 - Enum switch (`docs/tagged-enums.md`) limits:
   - Enum information crosses packages in the `go:enum` struct tag of `_tag`
     (`enumInfoOfTag`). Both checkers reject that tag key in source. A struct

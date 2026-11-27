@@ -305,7 +305,7 @@ index a8bfa875fe..c035bf5df2 100644
 -func (t anyType) Underlying() types.Type { return t }
 -func (t anyType) String() string         { return "any" }
 diff --git a/golang.org/x/tools/internal/gcimporter/ureader.go b/golang.org/x/tools/internal/gcimporter/ureader.go
-index 09e833ce53..d291f16a82 100644
+index 09e833ce53..5360e0b318 100644
 --- a/golang.org/x/tools/internal/gcimporter/ureader.go
 +++ b/golang.org/x/tools/internal/gcimporter/ureader.go
 @@ -207,6 +207,17 @@ func (r *reader) pos() token.Pos {
@@ -362,19 +362,31 @@ index 09e833ce53..d291f16a82 100644
  					idx, m := r.method()
  					methods = append(methods, indexedMethod{idx, m})
  				}
-@@ -675,6 +697,12 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types.Package, string) {
- 					methods = append(methods, indexedMethod{methodIdx, types.NewFunc(pos, pkg, name, sig)})
- 				}
+@@ -670,9 +692,23 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types.Package, string) {
+ 					}
+ 					tparams := r.typeParamNames(false)
+ 					sig := r.signature(recv, rtparams, tparams)
++					fn := types.NewFunc(pos, pkg, name, sig)
++					// The rest of the record, as for a function: the declaration,
++					// whether its file is strict, and its facts.
++					_ = r.pos()
++					if r.Bool() {
++						types.MarkStrict(sig)
++					}
++					r.funcFacts(fn)
  
+ 					pr.retireReader(r)
+-					methods = append(methods, indexedMethod{methodIdx, types.NewFunc(pos, pkg, name, sig)})
++					methods = append(methods, indexedMethod{methodIdx, fn})
++				}
++
 +				// Last: the facts of the ordinary methods, which come first
 +				// (see types.FuncFacts).
 +				for i := range ordinary {
 +					r.funcFacts(methods[i].fn)
-+				}
-+
+ 				}
+ 
  				if r.Version().Has(pkgbits.PreserveMethodOrder) {
- 					sort.Slice(methods, func(i, j int) bool {
- 						return methods[i].index < methods[j].index
 diff --git a/golang.org/x/tools/internal/pkgbits/codes.go b/golang.org/x/tools/internal/pkgbits/codes.go
 index 21f44d9656..9cc4a083d1 100644
 --- a/golang.org/x/tools/internal/pkgbits/codes.go

@@ -146,6 +146,7 @@ func (check *Checker) _CapLen(z *operand, call *ast.CallExpr, isLen bool, name s
 		// the expression s does not contain channel receives or
 		// function calls; in this case s is not evaluated."
 		if !check.hasCallOrRecv {
+			check.factsUneval(call)
 			z.mode_ = constant_
 			if t.len >= 0 {
 				z.val = constant.MakeInt64(t.len)
@@ -227,6 +228,7 @@ func (check *Checker) _Clear(z *operand, call *ast.CallExpr) {
 	}) {
 		return
 	}
+	check.factsZero(x)
 
 	z.mode_ = novalue
 	if check.recordTypes() {
@@ -867,6 +869,7 @@ func (check *Checker) _Real(z *operand, call *ast.CallExpr) {
 // recover() interface{}
 func (check *Checker) _Recover(z *operand, call *ast.CallExpr) {
 	check.strictRecover(call)
+	check.factsRecover()
 	if _, _, ok := check.argn(call, 0); !ok {
 		return
 	}
@@ -905,6 +908,7 @@ func (check *Checker) _Add(z *operand, call *ast.CallExpr) {
 
 // unsafe.Alignof(x T) uintptr
 func (check *Checker) _Alignof(z *operand, call *ast.CallExpr) {
+	defer check.factsUneval(call) // the argument is not evaluated
 	x, _, ok := check.argn(call, 1)
 	if !ok {
 		return
@@ -930,6 +934,7 @@ func (check *Checker) _Alignof(z *operand, call *ast.CallExpr) {
 
 // unsafe.Offsetof(x T) uintptr, where x must be a selector
 func (check *Checker) _Offsetof(z *operand, call *ast.CallExpr) {
+	defer check.factsUneval(call) // the argument is not evaluated
 	if !check.argCount(call, len(call.Args), 1, false) {
 		return
 	}
@@ -1004,6 +1009,7 @@ func (check *Checker) _Offsetof(z *operand, call *ast.CallExpr) {
 
 // unsafe.Sizeof(x T) uintptr
 func (check *Checker) _Sizeof(z *operand, call *ast.CallExpr) {
+	defer check.factsUneval(call) // the argument is not evaluated
 	x, _, ok := check.argn(call, 1)
 	if !ok {
 		return

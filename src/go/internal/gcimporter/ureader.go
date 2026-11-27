@@ -624,9 +624,17 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types.Package, string) {
 					}
 					tparams := r.typeParamNames(false)
 					sig := r.signature(recv, rtparams, tparams)
+					fn := types.NewFunc(pos, pkg, name, sig)
+					// The rest of the record, as for a function: the declaration,
+					// whether its file is strict, and its facts.
+					_ = r.pos()
+					if r.Bool() {
+						types.MarkStrict(sig)
+					}
+					r.funcFacts(fn)
 
 					pr.retireReader(r)
-					methods = append(methods, indexedMethod{methodIdx, types.NewFunc(pos, pkg, name, sig)})
+					methods = append(methods, indexedMethod{methodIdx, fn})
 				}
 
 				// Last: the facts of the ordinary methods, which come first

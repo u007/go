@@ -180,6 +180,7 @@ func (check *Checker) initVar(lhs *Var, x *operand, context string) {
 	}
 
 	check.flowProve(lhs, x)
+	check.factsBind(lhs, x)
 	check.assignment(x, lhs.typ, context)
 }
 
@@ -283,6 +284,7 @@ func (check *Checker) assignVar(lhs, rhs ast.Expr, x *operand, context string) {
 		context = "assignment to _ identifier"
 	}
 	check.flowProve(check.flowVar(lhs), x)
+	check.factsBind(check.flowVar(lhs), x)
 	check.assignment(x, T, context)
 }
 
@@ -498,6 +500,10 @@ func (check *Checker) assignVars(lhs, orig_rhs []ast.Expr) {
 	isCall := false
 	if r == 1 {
 		_, isCall = ast.Unparen(orig_rhs[0]).(*ast.CallExpr)
+	}
+
+	if l == 1 && isCall {
+		check.backCall, check.backTo = ast.Unparen(orig_rhs[0]).(*ast.CallExpr), lhs[0]
 	}
 
 	// If we have a n:n mapping from lhs variable to rhs expression,

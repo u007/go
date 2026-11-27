@@ -143,18 +143,23 @@ type Checker struct {
 	flowProofs    map[*Var]bool              // whether the value last assigned to a variable is proven non-nil; see flowProve
 	flow          *flowState                 // flow facts of the current function body; nil if not tracked; see strict_flow.go
 	bodies        map[*Signature]*bodyFacts  // facts recorded for the bodies of declared functions, by signature; see strict_facts.go
-	funcUses      map[*syntax.Name]*Func     // identifiers that denote a function or method; see callee
-	stmtCalls     map[*syntax.CallExpr]*Func // call statements in declared function bodies and their callees, nil for panic; see callStmt
-	noReturnCalls map[*syntax.CallExpr]bool  // call statements that never return; set by computeFacts, after all bodies are checked
-	enumGen       map[syntax.Expr]bool       // field selectors and panic names generated for enum switches
-	strictLHS     syntax.Expr                // the assignment target being evaluated by lhsVar; a map index equal to it is a write, not a read
-	imports       []*PkgName                 // list of imported packages
-	dotImportMap  map[dotImportKey]*PkgName  // maps dot-imported objects to the package they were dot-imported through
-	brokenAliases map[*TypeName]bool         // set of aliases with broken (not yet determined) types
-	unionTypeSets map[*Union]*_TypeSet       // computed type sets for union types
-	usedVars      map[*Var]bool              // set of used variables
-	usedPkgNames  map[*PkgName]bool          // set of used package names
-	mono          monoGraph                  // graph for detecting non-monomorphizable instantiation loops
+	fnVars        map[*Var]*fnVar            // what the bindings of variables of function type prove; see fnVar
+	resultOf      map[syntax.Expr]factDep    // the callee fn and result index j of the operands of a call with several results that have function type; see quietFn
+	backCall      *syntax.CallExpr           // the call of the assignment backTo = backCall(...) being checked; see keepsZeroed
+	backTo        syntax.Expr
+	checked       []*bodyFacts              // the bodies that checkBody checked, in order
+	methodBodies  map[string][]*bodyFacts   // the bodies of declared methods, by name; see checkBody
+	funcUses      map[*syntax.Name]*Func    // identifiers that denote a function or method; see callee
+	noReturnCalls map[*syntax.CallExpr]bool // call statements that never return; set once their body is checked, see noReturnFact
+	enumGen       map[syntax.Expr]bool      // field selectors and panic names generated for enum switches
+	strictLHS     syntax.Expr               // the assignment target being evaluated by lhsVar; a map index equal to it is a write, not a read
+	imports       []*PkgName                // list of imported packages
+	dotImportMap  map[dotImportKey]*PkgName // maps dot-imported objects to the package they were dot-imported through
+	brokenAliases map[*TypeName]bool        // set of aliases with broken (not yet determined) types
+	unionTypeSets map[*Union]*_TypeSet      // computed type sets for union types
+	usedVars      map[*Var]bool             // set of used variables
+	usedPkgNames  map[*PkgName]bool         // set of used package names
+	mono          monoGraph                 // graph for detecting non-monomorphizable instantiation loops
 
 	firstErr   error                    // first error encountered
 	methods    map[*TypeName][]*Func    // maps package scope type names to associated non-blank (non-interface) methods

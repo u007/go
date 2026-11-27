@@ -135,6 +135,7 @@ func (check *Checker) unary(x *operand, e *ast.UnaryExpr) {
 	op := e.Op
 	switch op {
 	case token.AND:
+		check.factsAddr(e.X)
 		// spec: "As an exception to the addressability
 		// requirement x may also be a composite literal."
 		if _, ok := ast.Unparen(e.X).(*ast.CompositeLit); !ok && x.mode() != variable {
@@ -831,7 +832,7 @@ func (check *Checker) binary(x *operand, e ast.Expr, lhs, rhs ast.Expr, op token
 	}
 
 	check.expr(nil, x, lhs)
-	check.expr(nil, &y, rhs)
+	check.flowRight(&y, lhs, rhs, op == token.LAND, op == token.LOR)
 checked:
 
 	if !x.isValid() {
@@ -1293,10 +1294,25 @@ func (check *Checker) multiExpr(e ast.Expr, allowCommaOk bool) (list []*operand,
 	if t, ok := x.typ().(*Tuple); ok && x.isValid() {
 		// multiple values
 		list = make([]*operand, t.Len())
+		var fn *Func     // the called function, if e is a call
+		var facts uint64 // its facts
+		if call, _ := ast.Unparen(e).(*ast.CallExpr); call != nil {
+			if fn = check.callee(call); fn != nil {
+				facts = FuncFacts(fn)
+			}
+		}
 		for i, v := range t.vars {
 			// create a dummy expression (in place of e) for better error messages
 			dummy := newIdent(startPos(e), nth(i+1, "function result"))
 			list[i] = &operand{mode_: value, expr: dummy, typ_: v.typ}
+			// A result that the function never leaves nil has a non-nil value.
+			list[i].nonNull = i < maxFactResults && facts&(factResult<<i) != 0
+			if _, ok := v.typ.Underlying().(*Signature); ok && fn != nil && i < maxFactResults {
+				if check.resultOf == nil {
+					check.resultOf = make(map[ast.Expr]factDep)
+				}
+				check.resultOf[dummy] = factDep{j: i, fn: fn}
+			}
 		}
 		return
 	}

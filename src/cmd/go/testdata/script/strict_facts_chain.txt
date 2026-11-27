@@ -1,0 +1,124 @@
+# strict facts: a strict caller gets no "may be nil" warning for a call whose
+# results the facts prove non-nil, even when the callees live in a //go:nostrict
+# file: a call chain, and a cycle of functions that return non-nil values.
+# A helper in the same position that can return nil still warns.
+# go build and go vet must agree.
+
+# The chain module: a strict main calls helpers in a nostrict file.
+cd chain
+go list -m -f '{{.Strict}}'
+stdout true
+go build .
+! stderr 'may be nil'
+go vet .
+! stderr 'may be nil'
+
+# The negative control: the same call form warns when the helper can return nil.
+cd ../neg
+go list -m -f '{{.Strict}}'
+stdout true
+go build .
+stderr -count=2 'strict: warning: maybeNil\(\d\) .*may be nil'
+go vet .
+stderr -count=2 'strict: warning: maybeNil\(\d\) .*may be nil'
+
+# A function that zeroes elements of its slice argument warns when the elements
+# must not be nil, unless the argument gets the result. The fact passes through
+# drop, a function of the package.
+cd ../zero
+go build .
+stderr -count=4 'strict: warning: \w+ may leave nil elements in [st] '
+stderr 'strict: warning: Delete may leave nil elements in s \(it clears elements of its parameter s\); use only its result'
+stderr 'strict: warning: drop may leave nil elements in t '
+go vet .
+stderr -count=4 'strict: warning: \w+ may leave nil elements in [st] '
+
+-- chain/go.mod --
+module chain
+
+go 1.28
+-- chain/a.go --
+package main
+
+func main() {
+	viaLib().Read(nil)
+	cycA(3).Read(nil)
+	solo().Read(nil)
+}
+-- chain/lib.go --
+//go:nostrict
+
+package main
+
+import "io"
+
+type impl struct{}
+
+func (impl) Read([]byte) (int, error) { return 0, nil }
+
+func viaLib() io.Reader { return inner() }
+func inner() io.Reader  { return impl{} }
+
+func cycA(n int) io.Reader {
+	if n > 0 {
+		return cycB(n)
+	}
+	return impl{}
+}
+func cycB(n int) io.Reader { return cycA(n - 1) }
+
+func solo() io.Reader { return impl{} }
+-- neg/go.mod --
+module neg
+
+go 1.28
+-- neg/a.go --
+package main
+
+func main() {
+	maybeNil(1).Read(nil)
+	maybeNil(0).Read(nil)
+}
+-- neg/lib.go --
+//go:nostrict
+
+package main
+
+import "io"
+
+type impl struct{}
+
+func (impl) Read([]byte) (int, error) { return 0, nil }
+
+func maybeNil(n int) io.Reader {
+	if n > 0 {
+		return nil
+	}
+	return impl{}
+}
+-- zero/go.mod --
+module zero
+
+go 1.28
+-- zero/a.go --
+package main
+
+import "slices"
+
+type T struct{ n int }
+
+type box struct{ s []*T }
+
+func main() {
+	s := []*T{{1}, {2}}
+	b := box{s}
+	n := []int{1, 2}
+	s = slices.Delete(s, 0, 1)
+	b.s = slices.Compact(b.s)
+	_ = slices.Delete(n, 0, 1)
+	_ = slices.Delete(s, 0, 1)
+	t := slices.DeleteFunc(s, func(p *T) bool { return p.n == 0 })
+	_ = drop(t)
+}
+
+func drop(s []*T) []*T { return slices.Delete(s, 0, 1) }

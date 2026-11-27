@@ -17,7 +17,8 @@ The fact is "proven non-nil".
 Support in Phase 1:
 - `if p != nil { ... }`
 - `if p == nil { return }`
-- `&&` short-circuit
+- `&&` short-circuit, also inside the condition: in `p != nil && p.x > 0` the
+  right operand is checked with `p` non-nil, and in `p == nil || p.x > 0` too
 - `||` on the false path: after `if err != nil || p == nil { return }`, `p` is
   non-nil
 - `else`
@@ -25,6 +26,7 @@ Support in Phase 1:
 Refuse to narrow when:
 - the variable is reassigned in the narrowed block
 - its address is taken (`&p`)
+- its type has a method with a pointer receiver (`h.Clear()` takes `&h`)
 - a function literal mentions it and the function binds that variable more
   than once
 
@@ -51,6 +53,7 @@ Phase 2 (implemented):
   earlier case. `switch p { case nil: ... }` works like `p == nil`.
 - A clause entered by `fallthrough` starts from the join of its case entry and
   the end of the clause before it, so only facts that both paths establish hold.
+  A `break` in it leaves with that state, less what the clause assigns.
   The clause before it keeps its own narrowing up to the `fallthrough`.
 - A type switch and `select` add no narrowing, but keep the narrowing held
   before them in every clause. A `select` receive from a channel whose element
@@ -178,31 +181,69 @@ only (`strictUse`, `flowProve` in `strict_flow.go`).
 
 ## Function facts
 
-The checker computes three facts for every function and method declared with a
+The checker computes six facts for every function and method declared with a
 body, in every file, after all bodies of the package are checked
 (`strict_facts.go`):
-- **Never returns**: the body has no return or defer statement and ends in a
+A deferred call *may recover* if the function it calls may call `recover`
+directly: a function literal that mentions `recover`, `recover` itself, a
+function or method without the fourth fact below, or a function value that is
+not proven quiet. A function value is quiet if it is a function literal that
+does not mention `recover`, a declared function or method with the fourth
+fact, a call result with the fifth fact, or a local variable with exactly one
+bound value that is quiet and whose address is not taken (`defer cancel()`,
+`return cancel`). A parameter, a named result and a type switch variable are
+not such a variable.
+A directly deferred method of an interface (`defer x.Close()`) is assumed quiet,
+except for the never-returns fact: its implementations are not known,
+and strict code cannot call `recover`. A non-strict method whose body calls
+`recover` itself breaks the assumption, and a fact may then hide a nil warning.
+- **Never returns**: the body has no return statement and no deferred call
+  that may recover, and ends in a
   terminating statement, where a call that never returns also terminates.
   Seeds: `runtime.Goexit`, `syscall.Exit`.
-- **Result i is never nil**: the body has no defer statement and no bare
-  return, and every return statement returns an address, a function literal,
+- **Result i is never nil**: the body has no deferred call that may recover,
+  no defer statement if the results are named, and no bare return, and every
+  return statement returns an address, a call of `new`, a function literal,
   a concrete value boxed in an interface, a strict or narrowed value, or a
   result of a function whose result is never nil.
-- **Parameter i is dereferenced** (a call panics if it is nil): the body has
-  no defer statement, and the first top-level statement that mentions the
+- **Parameter i is dereferenced** (a call does not return normally if it is
+  nil; the receiver of a method counts as a parameter): the body has
+  no deferred call that may recover, and the first top-level statement that mentions the
   parameter surely evaluates a use that panics on nil (`*p`, a field through
   `p`, a method value of an interface `p`, an index of a pointer to an array,
-  a call of `p`), or passes it to a parameter that is dereferenced. The scan
-  stops at the header of the first statement other than a simple statement,
-  since the statement may check the parameter or leave the function. A
-  mention under `&`, in a function literal, or in the right operand of `&&`
-  or `||` decides nothing.
+  a call of `p`, a method value that loads `*p`), or passes it to a parameter
+  or receiver that is dereferenced (not boxed in an interface on the way).
+  An operand that is not evaluated (a constant `len` or `cap`, an `unsafe`
+  function, a range over an array without an element variable) is no use. In a statement other than a simple
+  statement, only the header is surely evaluated, and the scan ends after a
+  statement that has a return or goto statement. A mention as `&p`, in a
+  function literal, or in the right operand of `&&` or `||` decides nothing. A defer statement that mentions the parameter
+  decides it without a use, and does not end the scan.
+- **Never calls recover**: the body does not call `recover` directly, so a
+  deferred call of the function never stops a panic.
+- **Result i is a function that never calls recover**: under the conditions
+  of the never-nil fact, every return statement returns a quiet function
+  value for result i.
+- **Parameter i may be zeroed**: the body calls `clear` on the parameter, a
+  slice, or on a slice expression of it, or passes one to a parameter with
+  this fact. Unlike the other facts it says what may happen, so it only adds
+  warnings. Facts describe 10 results and 20 parameters.
 
-Strict code uses the facts of imported functions only. A call statement that
+Strict code uses the facts of imported functions, and of functions of its own
+package whose bodies are checked before it. Each body's facts are set once it is
+checked, with the facts known so far, and a body in a strict file first checks
+the bodies of the package that it may call, found by name, and those bodies
+do the same, whatever their files. In a cycle of calls, a body checked before
+the body that it calls back does not know that body's facts; the facts of the
+cycle are completed when that body is checked. Once all bodies
+are checked, the facts are completed for the export data. A call statement that
 never returns ends the flow, so `if p == nil { t.Fatal() }` narrows `p`. A call
-whose result is never nil needs no check, so `errors.New(s).Error()` gives no
+whose result is never nil needs no check, also as one of several results, so `errors.New(s).Error()` gives no
 warning. An argument that may be nil, or is `nil`, for a dereferenced
-parameter of an imported function is a warning (`NilWarning`) that names the
+parameter is a warning (`NilWarning`) that names the
 function, the parameter, and the position of the use that panics; export data
 carries one position per dereferenced parameter. Facts travel in export data, so the build cache rebuilds dependents
-when they change. A missing fact means nothing is known.
+when they change. An argument for a parameter that may be zeroed is a warning if its elements
+must not be nil (`slices.Delete(s, 0, 1)` leaves nil in the old `s`), unless
+the argument is a call or a composite literal, or the call is assigned back to
+it: `s = slices.Delete(s, 0, 1)`, `x.s = f(x.s)`. A missing fact means nothing is known.

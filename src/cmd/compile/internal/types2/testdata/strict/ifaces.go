@@ -59,9 +59,8 @@ func boxNil() {
 }
 
 // background returns a nullable interface of package context, which is not
-// strict. The checker does not use the function facts of its own package, so
-// the result is not proven non-nil.
-func background() context.Context { return context.Background() }
+// strict, and it may be nil.
+func background() context.Context { return nil }
 
 // Nullable interface from package context, which is not strict.
 func nullable() {

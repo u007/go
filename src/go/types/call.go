@@ -967,6 +967,8 @@ func (check *Checker) selector(x *operand, e *ast.SelectorExpr, wantType bool) {
 			check.recordSelection(e, MethodVal, x.typ(), obj, index, indirect)
 			if IsInterface(x.typ()) && !isTypeParam(x.typ()) {
 				check.factsDeref(x) // a method value of a nil interface panics
+			} else if isPointer(x.typ()) && (len(index) > 1 || !isPointer(obj.Signature().recv.typ)) {
+				check.factsDeref(x) // so does one that loads *x: a value receiver, or a promoted method
 			}
 
 			// TODO(gri) The verification pass below is disabled for now because

@@ -559,8 +559,8 @@ func (check *Checker) stmtLabeled(ctxt stmtContext, s ast.Stmt, label string) {
 		check.suspendedCall("go", s.Call)
 
 	case *ast.DeferStmt:
-		check.factsDefer()
 		check.suspendedCall("defer", s.Call)
+		check.factsDefer(s.Call)
 
 	case *ast.ReturnStmt:
 		res := check.sig.results
@@ -722,6 +722,7 @@ func (check *Checker) stmtLabeled(ctxt stmtContext, s ast.Stmt, label string) {
 			if fall != nil {
 				// Entered by case or by fallthrough: only what both paths establish holds.
 				check.flow = joinFlow(check.flow, fall)
+				fork.start = check.flow.clone() // a break leaves with this state
 			}
 			check.openScope(clause, "case")
 			inner := inner
@@ -847,6 +848,7 @@ func (check *Checker) stmtLabeled(ctxt stmtContext, s ast.Stmt, label string) {
 					T = check.strictAssertType(lhs, T)
 				}
 				obj := newVar(LocalVar, lhs.Pos(), check.pkg, lhs.Name, T)
+				check.fnVar(obj).loud = true // its value is not a binding that factsBind sees
 				check.declare(check.scope, nil, obj, clause.Colon)
 				if iface {
 					check.flowSetNonNil(obj) // a nil interface matches no interface case

@@ -6,7 +6,11 @@
 
 package f
 
-import "os"
+import (
+	"context"
+	"os"
+	"sync"
+)
 
 type T struct{ N int }
 
@@ -75,10 +79,56 @@ func Guarded(p *T) int {
 }
 
 // May return.
-func Deferred() { defer println(); panic(0) }
+func Deferred() { defer Rescue(); panic(0) } // Rescue may stop the panic
 func Early() {
 	if c {
 		return
 	}
 	panic(0)
+}
+
+var mu sync.Mutex
+
+// Never nil: the deferred Unlock, of package sync, never calls recover.
+func Locked() *T {
+	mu.Lock()
+	defer mu.Unlock()
+	return &T{}
+}
+
+// Rescue calls recover, so a function that defers it may return nil.
+func Rescue() { recover() }
+
+func Rescued() *T {
+	defer Rescue()
+	return &T{}
+}
+
+// Generic methods have facts too.
+type B struct{}
+
+func (B) Make[P any](v P) *T { return &T{} }
+func (B) Fail[P any](v P)    { panic(v) }
+func (B) Maybe[P any](v P) *T {
+	if c {
+		return nil
+	}
+	return &T{}
+}
+
+// Dereference through a method, after statements that cannot return.
+func (t *T) Get() int { return t.N }
+func UseLate(p *T) int {
+	if c {
+		println()
+	}
+	return p.Get()
+}
+
+// Never nil: the deferred cancel, a result of context.WithCancel, is a
+// function that never calls recover.
+func Cancelled() *T {
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	return &T{}
 }

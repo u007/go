@@ -43,6 +43,11 @@ func (check *Checker) rangeStmt(inner stmtContext, rangeStmt *ast.RangeStmt, noN
 	ident, _ := ast.Unparen(sValue).(*ast.Ident)
 	noValue := sValue == nil || ident != nil && ident.Name == "_"
 
+	if x.isValid() && noValue && !check.hasCallOrRecv {
+		if _, ok := arrayPtrDeref(x.typ().Underlying()).(*Array); ok {
+			check.factsUneval(rangeVar)
+		}
+	}
 	if isTypes2 && x.isValid() && noValue && !check.hasCallOrRecv {
 		if t, ok := arrayPtrDeref(x.typ().Underlying()).(*Array); ok {
 			for {

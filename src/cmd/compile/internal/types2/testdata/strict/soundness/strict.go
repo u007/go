@@ -4,10 +4,12 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Soundness guard: every value below may be nil at run time (see lib.go), so
-// each unchecked use must be rejected. These cases must keep failing when the
-// checker learns facts about functions (summaries): "may be nil" stays the
-// default, and no summary may prove any of these non-nil.
+// Soundness guard: the values below that may be nil on a rare path (see
+// lib.go), such as f(), g.Get(), and c.Get(), must be rejected when used
+// unchecked. These cases must keep failing as the checker learns facts about
+// functions (summaries): "may be nil" stays the default. A wrapper that is
+// never nil, such as the results of Closure, Iface, and NewCell, may be
+// proven.
 
 package soundness
 
@@ -38,12 +40,9 @@ func uses() {
 // A function value, a closure result, and an interface method.
 func indirect() {
 	f := Closure()
-	take(f /* ERROR "strict: f may be nil here" */ /* ERROR "strict: cannot use f()" */ ())
+	take(f /* ERROR "strict: cannot use f()" */ ()) // Closure never returns nil
 	g := Iface(false)
-	take(g /* ERROR "strict: g may be nil here" */ .Get())
-	if g != nil {
-		take(g /* ERROR "strict: cannot use g.Get()" */ .Get())
-	}
+	take(g /* ERROR "strict: cannot use g.Get()" */ .Get()) // Iface never returns nil
 	h := Source
 	take(h /* ERROR "strict: h may be nil here" */ /* ERROR "strict: cannot use h()" */ ())
 }
@@ -157,10 +156,7 @@ func genericType() {
 	c := NewCell[*T]()
 	var d *Cell[*T] = c /* ERROR "strict: cannot use c" */
 	_ = d
-	take(c /* ERROR "strict: c may be nil here" */ .Get())
-	if c != nil {
-		take(c /* ERROR "strict: cannot use c.Get()" */ .Get())
-	}
+	take(c /* ERROR "strict: cannot use c.Get()" */ .Get()) // NewCell never returns nil
 	_ = Cell /* ERROR "strict: struct literal of type Cell[*T] must set field v" */ [*T]{}
 }
 
